@@ -111,6 +111,7 @@ Single-process Go application with goroutine-based concurrency:
 - **Error Handling Philosophy:** Explicit error returns following Go conventions, no exceptions/panics in normal operation, all errors logged with context
 - **Dependency Management:** Go modules (`go.mod`) with minimal external dependencies (only Paho MQTT client and pgx driver)
 - **Code Quality Tools:** `go fmt` (formatting), `go vet` (static analysis), and `staticcheck` (advanced linter) - `staticcheck` is the modern industry-standard replacement for deprecated `golint`
+- **Application Versioning:** Version injected at build time via ldflags (`-X main.Version=<version>`), following Go industry best practices - allows automated versioning in CI/CD without code modification
 
 ---
 
@@ -214,7 +215,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 6. `main.go` updated to initialize logger with `config.LogLevel` after configuration loads
 7. Logger outputs to stdout in JSON format with fields: timestamp, level, message, and any additional context
 8. Unit tests validate logger initialization with different levels and output formatting
-9. `main.go` logs application startup at INFO level with version information (hardcoded "v0.1.0" for now)
+9. `main.go` declares version variable `var Version = "dev"` and logs application startup at INFO level with version: `logger.Info("MQTT2BDD starting", "version", Version)`
 10. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.5: Implement MQTT Client Connection
@@ -270,7 +271,6 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 4. `Connect(ctx context.Context)` method establishes connection pool with context support
 5. Connection pool configuration: min connections = 1, max connections = 5 (sufficient for expected load, prevents resource waste)
 6. `Connect()` logs connection attempt (INFO) and success/failure (ERROR) with database host and name
-7. `Ping(ctx context.Context)` method verifies database connectivity
 8. `Close()` method cleanly closes connection pool
 9. `main.go` updated to create database client, connect on startup, defer close on exit
 10. Manual test: Run application, verify logs show successful PostgreSQL connection to `mqtt2bdd-dev-postgres` container
@@ -314,4 +314,265 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 8. Manual load test: Publish 100 messages rapidly, verify all messages persisted correctly
 9. Application startup logs show clear sequence: Config loaded → Logger initialized → MQTT connected → PostgreSQL connected → Subscribed to topics
 10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+---
+
+## Epic 2: Production Resilience & Reliability
+
+**Epic Goal:** Transform the fragile but functional MQTT→PostgreSQL pipeline from Epic 1 into a production-ready, self-healing service that automatically recovers from failures, buffers messages during outages, and provides comprehensive operational visibility through structured logging.
+
+### Story 2.1: Implement Message Buffering with Channels
+
+**As a** system operator,
+**I want** incoming MQTT messages buffered in memory,
+**so that** temporary database outages don't result in message loss.
+
+**Acceptance Criteria:**
+
+1. `main.go` creates buffered channel with capacity 1000: `msgChan := make(chan Message, 1000)`
+2. `Message` struct defined with fields: `Topic string`, `Timestamp time.Time`, `Payload []byte`
+3. MQTT message handler (from Story 1.9) sends messages to channel instead of directly inserting to database
+4. Separate database writer goroutine consumes messages from channel and calls `database.InsertMessage()`
+5. If channel is full (1000 messages), MQTT handler logs WARNING and blocks until space is available
+6. Database writer goroutine processes messages sequentially from channel
+7. Successful writes logged at DEBUG level, failures at ERROR level
+8. Manual test: Stop PostgreSQL container, publish 50 MQTT messages, restart PostgreSQL, verify all 50 messages eventually written
+9. Channel and goroutine architecture clearly documented in code comments demonstrating Go CSP pattern
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 2.2: Implement MQTT Automatic Reconnection
+
+**As a** system operator,
+**I want** the application to automatically reconnect to MQTT broker after connection loss,
+**so that** the service recovers without manual intervention.
+
+**Acceptance Criteria:**
+
+1. `internal/mqtt/client.go` adds connection lost callback handler to MQTT client configuration
+2. On connection lost, log ERROR with reason: "MQTT connection lost: <reason>"
+3. Implement reconnection loop with fixed 10-second retry interval
+4. Reconnection attempts logged at INFO level: "Attempting MQTT reconnection (attempt <n>)..."
+5. On successful reconnection, log INFO: "MQTT reconnected successfully" and re-subscribe to topics
+6. Reconnection runs in separate goroutine to avoid blocking main application
+7. Reconnection loop continues indefinitely until connection is re-established
+8. Application continues running during MQTT outage (doesn't crash or exit)
+9. Manual test: Stop Mosquitto container, verify reconnection attempts logged every 10 seconds, restart Mosquitto, verify successful reconnection and message reception resumes
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 2.3: Implement PostgreSQL Automatic Reconnection
+
+**As a** system operator,
+**I want** the application to automatically reconnect to PostgreSQL after connection loss,
+**so that** database writes resume without manual intervention.
+
+**Acceptance Criteria:**
+
+1. `internal/database/client.go` wraps all database operations with connection health checks
+2. On write failure due to connection error, log ERROR: "Database connection lost: <error>"
+3. Implement reconnection loop with fixed 10-second retry interval
+4. Reconnection attempts logged at INFO level: "Attempting database reconnection (attempt <n>)..."
+5. Retry failed INSERT operations with 10-second interval until successful (connection verification implicit in successful INSERT)
+6. On successful write after reconnection, log INFO: "Database reconnected successfully"
+7. Failed messages during outage remain in channel buffer (not lost) and are retried after reconnection
+8. Database writer goroutine continues processing buffered messages after reconnection
+9. Manual test: Stop PostgreSQL container, publish MQTT messages (buffered), restart PostgreSQL, verify all buffered messages written after reconnection
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 2.4: Implement Graceful Shutdown Handler
+
+**As a** system operator,
+**I want** the application to flush all buffered messages before shutdown,
+**so that** no data is lost when the container is stopped.
+
+**Acceptance Criteria:**
+
+1. `main.go` registers signal handler for SIGTERM and SIGINT using `signal.Notify()`
+2. On receiving shutdown signal, log INFO: "Shutdown signal received, flushing buffered messages..."
+3. Close MQTT client connection to stop receiving new messages
+4. Close message channel to signal database writer goroutine to finish processing
+5. Database writer goroutine processes all remaining messages in channel before exiting
+6. Wait for database writer goroutine to complete using `sync.WaitGroup` or channel completion signal
+7. Log INFO with count of messages flushed: "Flushed <n> buffered messages"
+8. Close database connection pool after all messages written
+9. Log INFO: "Shutdown complete" and exit with code 0
+10. Manual test: Publish messages, send SIGTERM (`docker stop <container>`), verify all buffered messages written before container exits
+11. Maximum shutdown time: 30 seconds (configurable via Docker stop timeout)
+12. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 2.5: Enhance Structured Logging for Operations
+
+**As a** system operator,
+**I want** comprehensive structured logs with consistent context fields,
+**so that** I can troubleshoot issues and monitor application health.
+
+**Acceptance Criteria:**
+
+1. All log entries include consistent context fields: `timestamp`, `level`, `message`, `component` (e.g., "mqtt", "database", "main")
+2. MQTT events logged with context: `event` (connected/disconnected/subscribed), `broker`, `topic` (if applicable)
+3. Database events logged with context: `event` (connected/disconnected/write_success/write_failure), `host`, `database`
+4. Message processing logged with context: `topic`, `payload_size`, `duration_ms` (time to write)
+5. Error logs include full error context: `error`, `component`, `operation` (what was being attempted)
+6. Startup sequence logged showing initialization of each component
+7. Log output includes application version injected via build-time ldflags (e.g., `-ldflags="-X main.Version=0.1.0"`), defaulting to "dev" for local development
+8. All timestamps in ISO 8601 format with timezone (UTC)
+9. Debug mode logs additional details: raw MQTT payloads (truncated), SQL queries, connection pool stats
+10. Manual test: Review logs in Docker logs output, verify JSON structure and field consistency
+11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 2.6: Add Application Health Monitoring Logs
+
+**As a** system operator,
+**I want** periodic health status logs,
+**so that** I can verify the application is running correctly.
+
+**Acceptance Criteria:**
+
+1. Implement periodic health check goroutine running every 60 seconds
+2. Health check logs at INFO level: "Health check: MQTT=<connected|disconnected>, DB=<connected|disconnected>, Buffer=<n>/<capacity> messages"
+3. MQTT connection status verified using client `IsConnected()` method
+4. Database connection status verified by checking last successful write timestamp (no explicit Ping needed)
+5. Buffer utilization calculated from channel length
+6. If buffer utilization >80%, log WARNING: "Message buffer >80% full, possible backpressure"
+7. Health check includes message processing rate: "Processed <n> messages in last 60s"
+8. Health check goroutine uses ticker for precise intervals
+9. Manual test: Monitor logs for 5 minutes, verify health checks appear every 60 seconds with accurate status
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+---
+
+## Epic 3: Production Docker Image & Educational Documentation
+
+**Epic Goal:** Package the production-ready application into an optimized Docker container, establish comprehensive testing infrastructure, and create educational documentation that enables Go learners to understand the architecture, deploy the application, and leverage the codebase as a learning resource.
+
+### Story 3.1: Create Production Multi-Stage Dockerfile
+
+**As a** DevOps engineer,
+**I want** an optimized production Docker image,
+**so that** the application can be deployed efficiently with minimal resource footprint.
+
+**Acceptance Criteria:**
+
+1. `Dockerfile` (root directory) implements multi-stage build with two stages: `builder` and `runtime`
+2. Builder stage uses `golang:1.23-alpine` image with full Go toolchain
+3. Builder stage defines `ARG VERSION=dev` for version injection at build time
+4. Builder stage copies source code, runs `go mod download`, and compiles binary: `go build -ldflags="-s -w -X main.Version=${VERSION}" -o /app/mqtt2bdd ./cmd/mqtt2bdd`
+5. `cmd/mqtt2bdd/main.go` declares version variable: `var Version = "dev"` (default for local development, overridden by ldflags at build)
+6. Builder stage produces statically-linked binary (no dynamic dependencies)
+7. Runtime stage uses `alpine:3.23` base image (minimal, no Go toolchain)
+8. Runtime stage installs only CA certificates (`ca-certificates` package) for TLS support
+9. Runtime stage copies compiled binary from builder stage
+10. Runtime stage sets non-root user for security: `USER nobody`
+11. Final image size optimized (target <20MB)
+12. Dockerfile includes labels: version, description, maintainer
+13. `ENTRYPOINT ["/app/mqtt2bdd"]` configured for container execution
+14. Manual test: Build image with version: `docker build --build-arg VERSION=0.1.0 -t mqtt2bdd:0.1.0 .`, verify application logs show correct version on startup
+15. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 3.2: Create Production Docker Compose Configuration
+
+**As a** DevOps engineer,
+**I want** a production-ready Docker Compose configuration,
+**so that** the full stack (app, PostgreSQL, MQTT) can be deployed with one command.
+
+**Acceptance Criteria:**
+
+1. `docker-compose.prod.yml` (root directory) defines three services: `postgres`, `mosquitto`, `mqtt2bdd`
+2. PostgreSQL service uses official `postgres:15-alpine` with volume for data persistence
+3. Mosquitto service uses official `eclipse-mosquitto:2` with volume for configuration and data
+4. MQTT2BDD service builds from production `Dockerfile` (not dev image)
+5. All services use container names with `mqtt2bdd-prod-` prefix: `mqtt2bdd-prod-postgres`, `mqtt2bdd-prod-mosquitto`, `mqtt2bdd-prod-app`
+6. MQTT2BDD service configured with environment variables via `.env.prod.example` file
+7. Services connected via dedicated Docker network
+8. Health checks configured for all services (PostgreSQL, Mosquitto, MQTT2BDD)
+9. Restart policy set to `unless-stopped` for production resilience
+10. `.env.prod.example` provided with all required environment variables documented
+11. Manual test: Deploy full stack with `docker-compose -f docker-compose.prod.yml up`, verify all services start, publish MQTT message, verify persistence to PostgreSQL
+12. Documentation in README includes production deployment instructions
+
+### Story 3.3: Create Integration Test Infrastructure
+
+**As a** QA engineer,
+**I want** isolated integration test environment,
+**so that** I can validate end-to-end functionality without polluting development data.
+
+**Acceptance Criteria:**
+
+1. `test/docker-compose.yml` defines isolated test stack: `test-postgres`, `test-mosquitto`, `test-mqtt2bdd`
+2. All test containers use `mqtt2bdd-test-` prefix for clear separation from dev/prod
+3. Test PostgreSQL uses ephemeral volume (no persistence) for clean state per test run
+4. Test stack uses different ports to avoid conflicts with dev environment (e.g., PostgreSQL 5433 instead of 5432)
+5. Test initialization script `test/init-db/01-schema.sql` creates same `sensor_metrics` schema
+6. Test MQTT2BDD service builds from source with test configuration
+7. `test/run-integration-tests.sh` script automates: start stack → wait for ready → publish test messages → verify DB → shutdown stack
+8. Integration test verifies: MQTT subscription, message persistence, reconnection after simulated failures
+9. Test script exits with code 0 on success, non-zero on failure (CI/CD compatible)
+10. Manual test: Run `./test/run-integration-tests.sh`, verify all tests pass and containers clean up
+11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 3.4: Write Comprehensive Unit Tests
+
+**As a** Go learner,
+**I want** comprehensive unit tests demonstrating Go testing patterns,
+**so that** I can learn idiomatic testing practices.
+
+**Acceptance Criteria:**
+
+1. Unit tests created for all core packages: `config`, `logger`, `mqtt`, `database`
+2. `internal/config/config_test.go` uses table-driven tests for environment variable loading
+3. `internal/mqtt/client_test.go` tests connection, subscription, and reconnection logic (using mocks or test broker)
+4. `internal/database/client_test.go` tests connection pool, INSERT operations, error handling (using test database or mocks)
+5. Tests demonstrate Go patterns: table-driven tests, test fixtures, subtests (`t.Run()`), test helpers
+6. All tests pass with `go test ./...`
+7. Tests include both success and failure scenarios (error paths)
+8. Tests use `t.Parallel()` where appropriate for concurrent execution
+9. Test coverage measured with `go test -cover ./...` (no specific percentage target, focus on quality)
+10. Mock implementations documented for learning (e.g., how to mock MQTT client, database connections)
+11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+### Story 3.5: Write Educational README Documentation
+
+**As a** Go learner,
+**I want** comprehensive README documentation,
+**so that** I can understand the architecture, deploy the application, and learn Go patterns from the codebase.
+
+**Acceptance Criteria:**
+
+1. `README.md` includes sections: Overview, Features, Architecture, Project Structure, Prerequisites, Quick Start, Configuration, Development, Production Deployment, Testing, Troubleshooting, Learning Resources
+2. **Overview:** Concise description of MQTT2BDD purpose and value proposition
+3. **Architecture:** Diagram (ASCII or embedded image) showing MQTT → Go App → PostgreSQL flow with goroutines and channels
+4. **Project Structure:** Directory tree with explanations of each package's responsibility
+5. **Prerequisites:** List required tools (Docker, Docker Compose, optionally Go 1.23+)
+6. **Quick Start:** Step-by-step guide from clone to running application (dev environment)
+7. **Configuration:** Table of all environment variables with descriptions, defaults, and examples
+8. **Development:** Instructions for dev setup, debugging with Delve, running tests, code quality tools
+9. **Production Deployment:** Instructions for deploying with production Docker Compose
+10. **Testing:** How to run unit tests and integration tests
+11. **Troubleshooting:** Common issues and solutions (connection failures, permission errors, etc.)
+12. **Learning Resources:** Annotated links to Go documentation, MQTT specs, PostgreSQL guides
+13. README includes badges: Go version, license (if applicable)
+14. Code examples in README use syntax highlighting
+15. Manual review: README is clear, complete, and actionable for a Go beginner
+
+### Story 3.6: Add Inline Code Documentation for Learning
+
+**As a** Go learner,
+**I want** inline code comments explaining Go patterns and architectural decisions,
+**so that** I can learn by reading the codebase.
+
+**Acceptance Criteria:**
+
+1. All exported functions, types, and methods have GoDoc comments following Go conventions
+2. Complex goroutine interactions documented with comments explaining concurrency patterns
+3. Channel operations annotated with buffering rationale and flow control explanations
+4. Error handling patterns explained (e.g., "wrapping errors with context for debugging")
+5. Key architectural decisions documented in package-level comments (e.g., `package mqtt` explains MQTT client responsibilities)
+6. Code examples of Go idioms highlighted: defer for cleanup, table-driven tests, interface usage
+7. `main.go` includes high-level application flow comments as a narrative guide
+8. Non-obvious performance optimizations explained (e.g., connection pooling benefits)
+9. Security considerations documented (e.g., why statically-linked binary, non-root user in Docker)
+10. Generated GoDoc viewable with `go doc` or `godoc` tool
+11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+---
+
 
