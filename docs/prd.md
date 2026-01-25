@@ -98,10 +98,10 @@ Single-process Go application with goroutine-based concurrency:
 - **Container Base Image:** Alpine Linux 3.23 - minimal footprint, widely used for Go applications
 - **Build Process:** Multi-stage Dockerfile (builder stage with Go toolchain, runtime stage with Alpine + binary only)
 - **Development Environment (Fully Containerized):** Three-container setup via `dev/docker-compose.yml`:
-  - PostgreSQL container (`mqtt2bdd-postgres`) for database
-  - Mosquitto container (`mqtt2bdd-mosquitto`) for MQTT broker
-  - Go development container (`mqtt2bdd-go-dev`) with volume-mounted project directory for live code editing
-  - **Container naming:** All containers prefixed with `mqtt2bdd-` for easy identification among other projects
+  - PostgreSQL container (`mqtt2bdd-dev-postgres`) for database
+  - Mosquitto container (`mqtt2bdd-dev-mosquitto`) for MQTT broker
+  - Go development container (`mqtt2bdd-dev-go-dev`) with volume-mounted project directory for live code editing
+  - **Container naming:** All containers prefixed with `mqtt2bdd-dev-` for easy identification among other projects
   - **Delve debugger integration:** Go container configured with Delve (dlv) for remote debugging via exposed port (equivalent to XDebug workflow familiar to PHP developers)
   - One-command startup: `docker-compose up` in `dev/` directory
   - Hot reload capability for rapid development iteration
@@ -143,7 +143,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 **Acceptance Criteria:**
 
 1. `dev/docker-compose.yml` defines three services: `postgres`, `mosquitto`, and `go-dev`
-2. All containers use `container_name` directive with `mqtt2bdd-` prefix: `mqtt2bdd-postgres`, `mqtt2bdd-mosquitto`, `mqtt2bdd-go-dev` for easy identification among other projects
+2. All containers use `container_name` directive with `mqtt2bdd-dev-` prefix: `mqtt2bdd-dev-postgres`, `mqtt2bdd-dev-mosquitto`, `mqtt2bdd-dev-go-dev` for easy identification among other projects
 3. PostgreSQL container uses official `postgres:15-alpine` image with environment variables for database name, user, and password
 4. Mosquitto container uses official `eclipse-mosquitto:2` image with basic configuration allowing anonymous connections
 5. Go development container based on `golang:1.23-alpine` (latest stable) with Delve debugger and `staticcheck` linter installed
@@ -152,8 +152,8 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 8. SQL initialization script `dev/init-db/01-schema.sql` creates `sensor_metrics` table with schema: `sensor VARCHAR(255), date TIMESTAMP, metrics JSONB`
 9. PostgreSQL container automatically executes initialization scripts on first startup
 10. All containers start successfully with `docker-compose up` from `dev/` directory
-11. Developer can verify PostgreSQL connectivity: `docker exec -it mqtt2bdd-postgres psql -U <user> -d <dbname> -c "\dt"` shows `sensor_metrics` table
-12. Developer can verify Mosquitto connectivity: `docker exec -it mqtt2bdd-mosquitto mosquitto_sub -t '#' -v` listens to all topics
+11. Developer can verify PostgreSQL connectivity: `docker exec -it mqtt2bdd-dev-postgres psql -U <user> -d <dbname> -c "\dt"` shows `sensor_metrics` table
+12. Developer can verify Mosquitto connectivity: `docker exec -it mqtt2bdd-dev-mosquitto mosquitto_sub -t '#' -v` listens to all topics
 13. `.gitignore` includes `.env` file and Docker-related temporary files
 14. `dev/.env.example` provides template for required environment variables with documentation
 
@@ -233,7 +233,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 6. `Connect()` logs connection attempt (INFO) and successful connection (INFO) or failure (ERROR) with context
 7. `Disconnect()` method cleanly closes MQTT connection
 8. `main.go` updated to create MQTT client, connect on startup, defer disconnect on exit
-9. Manual test: Run application with `docker-compose up`, verify logs show successful MQTT connection to `mqtt2bdd-mosquitto` container
+9. Manual test: Run application with `docker-compose up`, verify logs show successful MQTT connection to `mqtt2bdd-dev-mosquitto` container
 10. Application exits gracefully if MQTT connection fails with clear error message
 11. All code passes `go fmt`, `go vet`, and `staticcheck`
 
@@ -251,7 +251,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 4. `Subscribe()` logs subscription attempt (INFO) and success/failure with topic name
 5. Message handler callback invoked for each received message with topic and payload
 6. `main.go` implements simple message handler that logs received messages: topic, payload length, and first 100 bytes of payload (DEBUG level)
-7. Manual test: Use `mosquitto_pub` from mqtt2bdd-mosquitto container to publish test message: `docker exec mqtt2bdd-mosquitto mosquitto_pub -t 'test/topic' -m '{"temp": 20.5}'`
+7. Manual test: Use `mosquitto_pub` from mqtt2bdd-dev-mosquitto container to publish test message: `docker exec mqtt2bdd-dev-mosquitto mosquitto_pub -t 'test/topic' -m '{"temp": 20.5}'`
 8. Verify application logs show received message with correct topic and payload preview
 9. Message reception runs in separate goroutine (non-blocking)
 10. All code passes `go fmt`, `go vet`, and `staticcheck`
@@ -273,7 +273,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 7. `Ping(ctx context.Context)` method verifies database connectivity
 8. `Close()` method cleanly closes connection pool
 9. `main.go` updated to create database client, connect on startup, defer close on exit
-10. Manual test: Run application, verify logs show successful PostgreSQL connection to `mqtt2bdd-postgres` container
+10. Manual test: Run application, verify logs show successful PostgreSQL connection to `mqtt2bdd-dev-postgres` container
 11. Application exits gracefully if database connection fails with clear error message including connection details
 12. All code passes `go fmt`, `go vet`, and `staticcheck`
 
@@ -309,7 +309,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 3. Message handler runs asynchronously (goroutine) to avoid blocking MQTT message reception
 4. Successful persistence logged at DEBUG level: "Message persisted: topic=<topic>, size=<bytes>"
 5. Failed persistence logged at ERROR level with full context but does not crash application
-6. Manual end-to-end test: Publish MQTT message from mqtt2bdd-mosquitto container: `docker exec mqtt2bdd-mosquitto mosquitto_pub -t 'zigbee2mqtt/living_room/thermostat' -m '{"temperature": 21.3, "humidity": 45}'`
+6. Manual end-to-end test: Publish MQTT message from mqtt2bdd-dev-mosquitto container: `docker exec mqtt2bdd-dev-mosquitto mosquitto_pub -t 'zigbee2mqtt/living_room/thermostat' -m '{"temperature": 21.3, "humidity": 45}'`
 7. Verify message appears in PostgreSQL sensor_metrics table with correct topic, timestamp, and JSON payload
 8. Manual load test: Publish 100 messages rapidly, verify all messages persisted correctly
 9. Application startup logs show clear sequence: Config loaded → Logger initialized → MQTT connected → PostgreSQL connected → Subscribed to topics
