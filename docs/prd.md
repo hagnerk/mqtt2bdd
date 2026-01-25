@@ -46,7 +46,7 @@ MQTT2BDD bridges this gap as a standalone Go application that subscribes to all 
 1. **NFR1:** The application must run reliably with automatic recovery from MQTT broker and database connection failures
 2. **NFR2:** The application must be deployable as a Docker container based on Alpine Linux 3.23 with a statically-linked Go binary
 3. **NFR3:** The application must have comprehensive unit tests demonstrating Go testing best practices for core components (MQTT handler, database writer, reconnection logic)
-4. **NFR4:** All code must pass `go fmt` and `go vet` checks, following Go effective conventions and idiomatic patterns
+4. **NFR4:** All code must pass `go fmt`, `go vet`, and `staticcheck` checks, following Go effective conventions and idiomatic patterns
 5. **NFR5:** The codebase must follow Go project layout best practices with clear package separation (`cmd/`, `internal/`, `pkg/`)
 6. **NFR6:** The application must include comprehensive documentation (README) with architecture overview, setup instructions, configuration reference, and code walkthrough for Go learners
 7. **NFR7:** The application must handle current load (8 thermostats) with sufficient headroom for planned expansion to 100+ devices
@@ -110,6 +110,7 @@ Single-process Go application with goroutine-based concurrency:
 - **Concurrency Model:** Goroutines + channels for concurrent MQTT message handling and database writes, demonstrating Go's CSP (Communicating Sequential Processes) paradigm
 - **Error Handling Philosophy:** Explicit error returns following Go conventions, no exceptions/panics in normal operation, all errors logged with context
 - **Dependency Management:** Go modules (`go.mod`) with minimal external dependencies (only Paho MQTT client and pgx driver)
+- **Code Quality Tools:** `go fmt` (formatting), `go vet` (static analysis), and `staticcheck` (advanced linter) - `staticcheck` is the modern industry-standard replacement for deprecated `golint`
 
 ---
 
@@ -145,7 +146,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 2. All containers use `container_name` directive with `mqtt2bdd-` prefix: `mqtt2bdd-postgres`, `mqtt2bdd-mosquitto`, `mqtt2bdd-go-dev` for easy identification among other projects
 3. PostgreSQL container uses official `postgres:15-alpine` image with environment variables for database name, user, and password
 4. Mosquitto container uses official `eclipse-mosquitto:2` image with basic configuration allowing anonymous connections
-5. Go development container based on `golang:1.23-alpine` (latest stable) with Delve debugger installed
+5. Go development container based on `golang:1.23-alpine` (latest stable) with Delve debugger and `staticcheck` linter installed
 6. Go container exposes port 2345 for Delve remote debugging
 7. Go container mounts project root directory as volume (e.g., `.:/app`) for live code editing
 8. SQL initialization script `dev/init-db/01-schema.sql` creates `sensor_metrics` table with schema: `sensor VARCHAR(255), date TIMESTAMP, metrics JSONB`
@@ -176,7 +177,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 4. Application can be built inside Go dev container: `go build -o bin/mqtt2bdd ./cmd/mqtt2bdd`
 5. Application can be run inside Go dev container: `./bin/mqtt2bdd` prints startup message
 6. `go.mod` and `go.sum` files tracked in version control
-7. All code passes `go fmt` and `go vet` with zero warnings
+7. All code passes `go fmt`, `go vet`, and `staticcheck` with zero warnings
 8. README.md created with sections: Overview, Project Structure, Getting Started (placeholder content)
 
 ### Story 1.3: Implement Configuration Package
@@ -195,7 +196,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 6. Unit tests in `internal/config/config_test.go` validate loading with all variables set, with missing required variables, and with default values
 7. Unit tests use table-driven test pattern demonstrating Go testing idioms
 8. `main.go` updated to call `config.LoadConfig()` on startup and log fatal error if configuration fails
-9. All code passes `go fmt` and `go vet`
+9. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.4: Implement Structured Logging Package
 
@@ -214,7 +215,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 7. Logger outputs to stdout in JSON format with fields: timestamp, level, message, and any additional context
 8. Unit tests validate logger initialization with different levels and output formatting
 9. `main.go` logs application startup at INFO level with version information (hardcoded "v0.1.0" for now)
-10. All code passes `go fmt` and `go vet`
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.5: Implement MQTT Client Connection
 
@@ -234,7 +235,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 8. `main.go` updated to create MQTT client, connect on startup, defer disconnect on exit
 9. Manual test: Run application with `docker-compose up`, verify logs show successful MQTT connection to `mqtt2bdd-mosquitto` container
 10. Application exits gracefully if MQTT connection fails with clear error message
-11. All code passes `go fmt` and `go vet`
+11. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.6: Implement MQTT Subscription and Message Reception
 
@@ -253,7 +254,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 7. Manual test: Use `mosquitto_pub` from mqtt2bdd-mosquitto container to publish test message: `docker exec mqtt2bdd-mosquitto mosquitto_pub -t 'test/topic' -m '{"temp": 20.5}'`
 8. Verify application logs show received message with correct topic and payload preview
 9. Message reception runs in separate goroutine (non-blocking)
-10. All code passes `go fmt` and `go vet`
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.7: Implement PostgreSQL Client Connection
 
@@ -267,14 +268,14 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 2. `go.mod` includes dependency: `github.com/jackc/pgx/v5` and `github.com/jackc/pgx/v5/pgxpool`
 3. `NewClient(config)` creates connection pool using DSN constructed from config: `postgres://user:pass@host:port/dbname`
 4. `Connect(ctx context.Context)` method establishes connection pool with context support
-5. Connection pool configuration: min connections = 2, max connections = 10
+5. Connection pool configuration: min connections = 1, max connections = 5 (sufficient for expected load, prevents resource waste)
 6. `Connect()` logs connection attempt (INFO) and success/failure (ERROR) with database host and name
 7. `Ping(ctx context.Context)` method verifies database connectivity
 8. `Close()` method cleanly closes connection pool
 9. `main.go` updated to create database client, connect on startup, defer close on exit
 10. Manual test: Run application, verify logs show successful PostgreSQL connection to `mqtt2bdd-postgres` container
 11. Application exits gracefully if database connection fails with clear error message including connection details
-12. All code passes `go fmt` and `go vet`
+12. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.8: Implement PostgreSQL Message Writer
 
@@ -293,7 +294,7 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 7. Unit test (using test database or mocks) validates successful insert and error handling
 8. Manual test: Call `InsertMessage()` directly from `main.go` with hardcoded test data on startup
 9. Verify test record appears in PostgreSQL: `docker exec -it mqtt2bdd-postgres psql -U <user> -d <dbname> -c "SELECT * FROM sensor_metrics;"`
-10. All code passes `go fmt` and `go vet`
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
 
 ### Story 1.9: Integrate MQTT Reception with PostgreSQL Persistence
 
@@ -312,5 +313,5 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 7. Verify message appears in PostgreSQL sensor_metrics table with correct topic, timestamp, and JSON payload
 8. Manual load test: Publish 100 messages rapidly, verify all messages persisted correctly
 9. Application startup logs show clear sequence: Config loaded → Logger initialized → MQTT connected → PostgreSQL connected → Subscribed to topics
-10. All code passes `go fmt` and `go vet`
+10. All code passes `go fmt`, `go vet`, and `staticcheck`
 
