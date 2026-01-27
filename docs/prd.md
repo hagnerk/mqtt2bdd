@@ -157,6 +157,8 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 12. Developer can verify Mosquitto connectivity: `docker exec -it mqtt2bdd-dev-mosquitto mosquitto_sub -t '#' -v` listens to all topics
 13. `.gitignore` includes `.env` file and Docker-related temporary files
 14. `dev/.env.example` provides template for required environment variables with documentation
+15. `.vscode/launch.json` configuration provided for remote debugging (connects to `localhost:2345`)
+16. Manual debugging test: Set breakpoint in VS Code (or compatible IDE), attach debugger to port 2345, run application in container, verify breakpoint is hit and variables can be inspected
 
 ### Story 1.2: Initialize Go Project Structure
 
