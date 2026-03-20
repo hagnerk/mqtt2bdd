@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: mqtt2bdd-dev-postgres
+    env_file: .env
+    volumes:
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+      - mqtt2bdd-dev-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - mqtt2bdd-dev-network
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mqtt2bdd-dev-mosquitto
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "1883:1883"
+    networks:
+      - mqtt2bdd-dev-network
+
+  go-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: mqtt2bdd-dev-go-dev
+    volumes:
+      - ../:/app
+    working_dir: /app
+    ports:
+      - "2345:2345"
+    # Requires go.mod and cmd/mqtt2bdd/main.go to exist before starting.
+    # Create those files (Task 9) before running docker-compose up.
+    command: dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient --continue ./cmd/mqtt2bdd
+    networks:
+      - mqtt2bdd-dev-network
+    depends_on:
+      - postgres
+      - mosquitto
+
+networks:
+  mqtt2bdd-dev-network:
+    driver: bridge
+
+volumes:
+  mqtt2bdd-dev-pgdata:

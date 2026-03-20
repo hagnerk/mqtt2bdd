@@ -1,0 +1,18 @@
+# Environment files — never commit real credentials
+.env
+
+# Go build artifacts
+bin/
+*.exe
+*.test
+*.out
+
+# Docker temporary files
+*.pid
+
+# VS Code — track launch.json only
+.vscode/*
+!.vscode/launch.json
+
+# JetBrains IDEs
+.idea/
