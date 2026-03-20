@@ -1,12 +1,7 @@
 package main
 
-import (
-	"time"
-	"fmt"
-)
+import "fmt"
 
 func main() {
 	fmt.Println("MQTT2BDD starting...")
-	time.Sleep(20 * time.Second)
-	fmt.Println("MQTT2BDD stop...")
 }
