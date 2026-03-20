@@ -1,0 +1,73 @@
+schema: 1
+story: '1.1'
+story_title: 'Setup Containerized Development Environment'
+gate: CONCERNS
+status_reason: >
+  All 16 ACs verified and implementation is clean. One medium concern:
+  docker-compose depends_on lacks healthchecks, so go-dev may start before
+  postgres/mosquitto are fully ready. Non-blocking for local dev use.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-03-20T00:00:00Z'
+
+top_issues:
+  - id: 'depends-on-no-healthcheck'
+    severity: medium
+    description: >
+      go-dev depends_on postgres and mosquitto without condition: service_healthy.
+      On slow hosts, Delve may start before services accept connections.
+    suggested_owner: dev
+    refs:
+      - dev/docker-compose.yml
+
+waiver:
+  active: false
+
+quality_score: 90
+expires: '2026-04-03T00:00:00Z'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >
+      .env gitignored, only .env.example tracked with placeholder values.
+      Delve on 0.0.0.0:2345 acceptable for local dev. Dev container runs as root
+      — acceptable for dev-only use.
+  performance:
+    status: PASS
+    notes: >
+      Named pgdata volume ensures persistence. Dev tools baked into image
+      (not reinstalled on container start). No performance concerns.
+  reliability:
+    status: CONCERNS
+    notes: >
+      depends_on without healthcheck — go-dev may attempt to start before
+      postgres/mosquitto are ready to accept connections. Workaround is
+      docker-compose restart go-dev.
+  maintainability:
+    status: PASS
+    notes: >
+      Version pins documented in story Debug Log. Files well-commented.
+      substitutePath in launch.json resolves host/container path mapping.
+      Upgrade note: dlv@v1.25.2 and staticcheck@v0.6.1 must be revisited
+      when upgrading to Go 1.24+.
+
+recommendations:
+  immediate: []
+  future:
+    - action: >
+        Add healthcheck + condition: service_healthy to depends_on in
+        dev/docker-compose.yml for postgres and mosquitto services.
+      refs:
+        - dev/docker-compose.yml
+    - action: >
+        Add comment in dev/Dockerfile.dev noting that dlv and staticcheck
+        version pins require updating when upgrading to Go 1.24+.
+      refs:
+        - dev/Dockerfile.dev
