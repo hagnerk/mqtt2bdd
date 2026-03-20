@@ -7,7 +7,13 @@
       "request": "attach",
       "mode": "remote",
       "host": "localhost",
-      "port": 2345
+      "port": 2345,
+      "substitutePath": [
+        {
+          "from": "${workspaceFolder}",
+          "to": "/app"
+        }
+      ]
     }
   ]
 }
