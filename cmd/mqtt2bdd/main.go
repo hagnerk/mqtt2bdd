@@ -1,16 +1,21 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
+	"github.com/spydemon/mqtt2bdd/internal/logger"
 )
+
+// Version is injected at build time via ldflags. Defaults to "dev" for local builds.
+var Version = "dev"
 
 func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
-	fmt.Printf("Configuration loaded: %+v\n", cfg)
+
+	l := logger.InitLogger(cfg.LogLevel)
+	l.Info("MQTT2BDD starting", "version", Version)
 }
