@@ -7,6 +7,9 @@ bin/
 *.test
 *.out
 
+# Go debug artifacts
+__debug_bin*
+
 # Docker temporary files
 *.pid
 
