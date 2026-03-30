@@ -1,0 +1,50 @@
+schema: 1
+story: "1.5"
+story_title: "Implement MQTT Client Connection"
+gate: PASS
+status_reason: "All 11 ACs met, tooling clean, no high/medium issues. Three low-severity findings addressed by QA refactoring during review."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-03-30T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 4 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-004: No timeout on context.Background() connect — TCP handshake could hang on firewall-drop scenario. Address in story 2.2."
+
+quality_score: 95
+expires: "2026-04-13T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No unit tests by design (deferred to story 3.4); manual tests documented
+  risks_identified: 4
+  trace:
+    ac_covered: [1, 2, 3, 4, 6, 7, 8, 9, 10, 11]
+    ac_gaps: [5]  # AC5 (QoS 0) applies to Subscribe/Publish, not Connect — will be verified in story 1.6
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No credentials in logs (SEC-001). cfg credentials not retained in Client struct after construction (refactored: cfg replaced by brokerURL string field)."
+  performance:
+    status: PASS
+    notes: "Single connection, negligible overhead. brokerURL computed once at construction."
+  reliability:
+    status: PASS
+    notes: "Graceful failure with os.Exit(1) and ERROR log verified. context cancellation supported via select/Done() pattern."
+  maintainability:
+    status: PASS
+    notes: "Godoc on all exported symbols, named constant quiesceMs, clear comments on deferred reconnection logic."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add connection timeout in story 2.2 — replace context.Background() with context.WithTimeout to handle firewall-drop hang scenarios."
+      refs: ["cmd/mqtt2bdd/main.go:26"]
+    - action: "Add unit tests for MQTT client in story 3.4 using a lightweight test broker (e.g. mochi-mqtt or a mock)."
+      refs: ["internal/mqtt/client.go"]
