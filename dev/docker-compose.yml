@@ -27,6 +27,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: mqtt2bdd-dev-go-dev
+    env_file: .env
     volumes:
       - ../:/app
     working_dir: /app
