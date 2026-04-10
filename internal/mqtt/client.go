@@ -12,6 +12,8 @@ import (
 	"github.com/spydemon/mqtt2bdd/internal/config"
 )
 
+const qos0 = byte(0)
+
 // Client wraps the Eclipse Paho MQTT client, providing connection management
 // and structured logging.
 type Client struct {
@@ -83,4 +85,23 @@ func (c *Client) Disconnect() {
 // to the MQTT broker.
 func (c *Client) IsConnected() bool {
 	return c.pahoClient.IsConnected()
+}
+
+// Subscribe registers handler to be called for each message received on topic.
+// It uses QoS 0 (at-most-once delivery). The wildcard topic "#" captures all
+// published topics. The handler is invoked in a goroutine managed by the Paho
+// library — Subscribe returns immediately after the broker acknowledges the
+// subscription.
+func (c *Client) Subscribe(topic string, handler MessageHandler) error {
+	c.logger.Info("subscribing to MQTT topic", "topic", topic)
+	token := c.pahoClient.Subscribe(topic, qos0, func(_ mqtt.Client, msg mqtt.Message) {
+		handler(msg.Topic(), msg.Payload())
+	})
+	<-token.Done()
+	if err := token.Error(); err != nil {
+		c.logger.Error("MQTT subscription failed", "topic", topic, "error", err)
+		return fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
+	}
+	c.logger.Info("MQTT subscribed", "topic", topic)
+	return nil
 }

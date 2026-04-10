@@ -27,4 +27,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer mqttClient.Disconnect()
+
+	mqttMessageHandler := func(topic string, payload []byte) {
+		preview := payload
+		if len(preview) > 100 {
+			preview = preview[:100]
+		}
+		l.Debug("message received", "topic", topic, "payload_length", len(payload), "payload_preview", string(preview))
+	}
+	if err := mqttClient.Subscribe("#", mqttMessageHandler); err != nil {
+		l.Error("MQTT subscribe failed", "error", err)
+		os.Exit(1)
+	}
+
+	select {} // Block until process is killed — signal handling added in story 2.x
 }

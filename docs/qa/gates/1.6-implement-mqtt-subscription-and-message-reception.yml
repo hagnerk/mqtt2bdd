@@ -1,0 +1,54 @@
+schema: 1
+story: "1.6"
+story_title: "Implement MQTT Subscription and Message Reception"
+gate: PASS
+status_reason: "All 10 ACs met, tooling clean, no high/medium issues. Two low-severity findings are carry-forwards deferred to stories 2.x and 2.2 respectively."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-04-10T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 2 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-001: defer Disconnect() unreachable via select{} — signal handling needed (story 2.x)."
+      - "FIND-002: Connect uses context.Background() with no timeout — carry-forward from FIND-004/1.5 (story 2.2)."
+
+quality_score: 93
+
+expires: "2026-04-24T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No unit tests by design (broker required); manual integration test executed
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "SEC-001 respected. No credentials logged. Subscribe retains no config state. DEBUG payload logging acceptable at dev-phase verbosity."
+  performance:
+    status: PASS
+    notes: "<-token.Done() parks goroutine (zero CPU). select{} parks main goroutine (zero CPU, Go scheduler primitive). Payload truncated to 100 bytes per message."
+  reliability:
+    status: PASS
+    notes: "Subscribe failure exits cleanly with ERROR log + os.Exit(1). No panics possible in message handler. Deferred Disconnect not reachable via select{} — accepted, documented, deferred to story 2.x."
+  maintainability:
+    status: PASS
+    notes: "Godoc on Subscribe explains QoS 0, wildcard, and goroutine behavior. Named constant qos0. Comment on select{} explains temporary nature."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add signal handling (SIGTERM/SIGINT) to replace select{} and ensure defer Disconnect() executes on graceful shutdown."
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Add connection timeout — replace context.Background() in Connect call with context.WithTimeout to handle firewall-drop hang. (Carry-forward from 1.5 FIND-004.)"
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Add unit tests for Subscribe and message handler in story 3.4 using a lightweight test broker."
+      refs: ["internal/mqtt/client.go", "internal/mqtt/client_test.go"]
