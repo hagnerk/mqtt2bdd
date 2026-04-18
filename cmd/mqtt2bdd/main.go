@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
+	"github.com/spydemon/mqtt2bdd/internal/database"
 	"github.com/spydemon/mqtt2bdd/internal/logger"
 	"github.com/spydemon/mqtt2bdd/internal/mqtt"
 )
@@ -39,6 +40,12 @@ func main() {
 		l.Error("MQTT subscribe failed", "error", err)
 		os.Exit(1)
 	}
+
+	dbClient := database.NewClient(cfg, l)
+	if err := dbClient.Connect(context.Background()); err != nil {
+		os.Exit(1)
+	}
+	defer dbClient.Close()
 
 	select {} // Block until process is killed — signal handling added in story 2.x
 }
