@@ -1,0 +1,55 @@
+schema: 1
+story: "1.8"
+story_title: "Implement PostgreSQL Message Writer"
+gate: PASS
+status_reason: "All 11 ACs implemented and validated. One test-code anti-pattern fixed (defer/os.Exit in TestMain). No blocking issues."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-05-01T14:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "TEST-001"
+    severity: low
+    finding: "AC6/AC7/AC8 log output not programmatically asserted in integration tests"
+    suggested_action: "Add a test logger that captures slog output if log spec becomes contractual"
+    suggested_owner: dev
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Log field assertions (AC6/7/8) if observability requirements tighten"
+
+quality_score: 95
+expires: "2026-05-15T00:00:00Z"
+
+evidence:
+  tests_reviewed: 4
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Parameterized queries ($1/$2/$3) via pgx; no hardcoded credentials; metrics stored as-is (intentional schema-on-read)"
+  performance:
+    status: PASS
+    notes: "Single Exec per message; []rune(sensor) runs on every call (not gated) but is negligible at home-automation message rates (~100 msg/s max)"
+  reliability:
+    status: PASS
+    notes: "ON CONFLICT DO NOTHING makes writes idempotent; error wrapping preserves context; context cancellation handled"
+  maintainability:
+    status: PASS
+    notes: "Clean client.go/queries.go separation; godoc on InsertMessage; maxSensorLen named constant; external test package pattern"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add programmatic log assertions for AC6/AC7/AC8 if log contract becomes strict"
+      refs: ["internal/database/integration_test.go"]
+    - action: "Address FIND-001 (defer Close unreachable via SIGINT) and FIND-002 (context.Background() in Connect) carried from story 1.7"
+      refs: ["cmd/mqtt2bdd/main.go", "internal/database/client.go"]

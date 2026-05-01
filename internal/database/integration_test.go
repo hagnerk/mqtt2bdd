@@ -31,7 +31,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "TestMain: open pool: %v\n", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
 
 	if _, err := pool.Exec(context.Background(), "TRUNCATE TABLE sensor_metrics"); err != nil {
 		fmt.Fprintf(os.Stderr, "TestMain: truncate before tests: %v\n", err)
@@ -40,10 +39,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	if _, err := pool.Exec(context.Background(), "TRUNCATE TABLE sensor_metrics"); err != nil {
-		fmt.Fprintf(os.Stderr, "TestMain: truncate after tests: %v\n", err)
-		os.Exit(1)
-	}
+	pool.Exec(context.Background(), "TRUNCATE TABLE sensor_metrics") // best-effort cleanup
 
 	os.Exit(code)
 }
