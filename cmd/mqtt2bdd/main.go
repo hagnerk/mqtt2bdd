@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
+	"time"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
 	"github.com/spydemon/mqtt2bdd/internal/database"
@@ -46,6 +48,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer dbClient.Close()
+
+	if err := dbClient.InsertMessage(context.Background(), "test/sensor", time.Now(), json.RawMessage(`{"temperature": 21.3}`)); err != nil {
+		l.Error("test insert failed", "error", err)
+	}
 
 	select {} // Block until process is killed — signal handling added in story 2.x
 }
