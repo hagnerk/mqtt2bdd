@@ -35,7 +35,7 @@ services:
       - "2345:2345"
     # Requires go.mod and cmd/mqtt2bdd/main.go to exist before starting.
     # Create those files (Task 9) before running docker-compose up.
-    command: dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient --continue ./cmd/mqtt2bdd
+    command: dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient ./cmd/mqtt2bdd
     networks:
       - mqtt2bdd-dev-network
     depends_on:
