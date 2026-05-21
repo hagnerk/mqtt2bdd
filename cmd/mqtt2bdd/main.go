@@ -31,26 +31,22 @@ func main() {
 	}
 	defer mqttClient.Disconnect()
 
-	mqttMessageHandler := func(topic string, payload []byte) {
-		preview := payload
-		if len(preview) > 100 {
-			preview = preview[:100]
-		}
-		l.Debug("message received", "topic", topic, "payload_length", len(payload), "payload_preview", string(preview))
-	}
-	if err := mqttClient.Subscribe("#", mqttMessageHandler); err != nil {
-		l.Error("MQTT subscribe failed", "error", err)
-		os.Exit(1)
-	}
-
 	dbClient := database.NewClient(cfg, l)
 	if err := dbClient.Connect(context.Background()); err != nil {
 		os.Exit(1)
 	}
 	defer dbClient.Close()
 
-	if err := dbClient.InsertMessage(context.Background(), "test/sensor", time.Now(), json.RawMessage(`{"temperature": 21.3}`)); err != nil {
-		l.Error("test insert failed", "error", err)
+	mqttMessageHandler := func(topic string, payload []byte) {
+		go func() {
+			if err := dbClient.InsertMessage(context.Background(), topic, time.Now(), json.RawMessage(payload)); err != nil {
+				return // error already logged by InsertMessage
+			}
+		}()
+	}
+	if err := mqttClient.Subscribe("#", mqttMessageHandler); err != nil {
+		l.Error("MQTT subscribe failed", "error", err)
+		os.Exit(1)
 	}
 
 	select {} // Block until process is killed — signal handling added in story 2.x

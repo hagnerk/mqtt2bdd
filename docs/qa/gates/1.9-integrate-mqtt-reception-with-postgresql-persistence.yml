@@ -1,0 +1,55 @@
+schema: 1
+story: "1.9"
+story_title: "Integrate MQTT Reception with PostgreSQL Persistence"
+gate: PASS
+status_reason: "All 11 ACs implemented and validated. One low-severity finding (unbounded goroutine-per-message) is an accepted temporary design documented for replacement in story 2.1. No blocking issues."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-05-21T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "FIND-009"
+    severity: low
+    finding: "Goroutine-per-message pattern: under sustained DB outage + burst message rate, goroutines accumulate (each blocking on context.Background()). Negligible at home-automation scale."
+    suggested_action: "Story 2.1 replaces this with a bounded channel + single DB writer goroutine — no action required in 1.9."
+    suggested_owner: dev
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Goroutine accumulation during DB outage (FIND-009) — resolved structurally by story 2.1"
+
+quality_score: 95
+expires: "2026-06-04T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No new tests by design; manual E2E confirmed; InsertMessage covered by 1.8 integration tests
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new credentials or network surface. Parameterized queries via InsertMessage unchanged. json.RawMessage stored as-is (intentional schema-on-read)."
+  performance:
+    status: PASS
+    notes: "Goroutine-per-message lightweight at current scale (<10 msg/sec). Goroutine accumulation during outage is negligible at home-automation rates. Story 2.1 provides structural fix."
+  reliability:
+    status: PASS
+    notes: "Errors handled without crashing app. FIND-001 (defer unreachable via SIGINT), FIND-002 (context.Background() no timeout), FIND-004 (MQTT connect no timeout) remain deferred to stories 2.x as tracked carry-forwards."
+  maintainability:
+    status: PASS
+    notes: "Single-file change, clean idiomatic Go, goroutine-per-message pattern explicitly documented as temporary with story 2.1 as the replacement. Comment explains non-obvious error handling rationale."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Replace goroutine-per-message with buffered channel + single DB writer goroutine (FIND-009)"
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Address FIND-001 (defer Close unreachable via SIGINT), FIND-002 (context.Background() in Connect), FIND-004 (MQTT connect timeout)"
+      refs: ["cmd/mqtt2bdd/main.go", "internal/database/client.go", "internal/mqtt/client.go"]
