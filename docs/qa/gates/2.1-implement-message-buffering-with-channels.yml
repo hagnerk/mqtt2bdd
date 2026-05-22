@@ -1,0 +1,52 @@
+schema: 1
+story: "2.1"
+story_title: "Implement Message Buffering with Channels"
+gate: PASS
+status_reason: "All 10 ACs verified. One coding standards violation (magic number in retry delay) fixed directly during review. Retry loop beyond original story scope correctly resolves a spec contradiction required by AC8."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-05-22T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-001, FIND-002, FIND-004 carried forward from 1.9 — tracked for stories 2.2/2.4"
+
+quality_score: 95
+expires: "2026-06-05T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No new tests by design; manual E2E confirmed (50/50 messages after DB outage)
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new attack surface. No credentials or network endpoints added. Parameterised queries via InsertMessage unchanged. json.RawMessage(msg.Payload) is a zero-copy conversion with no injection risk."
+  performance:
+    status: PASS
+    notes: "Bounded channel (cfg.BufferSize, default 1000) caps memory during DB outage. Back-pressure propagates naturally to MQTT handler once channel fills. Acceptable at home-automation scale."
+  reliability:
+    status: PASS
+    notes: "Retry loop guarantees no message loss during DB outage (AC8 manually validated: 50/50 rows). Goroutine exit condition is channel close, deferred to story 2.4. FIND-001/FIND-002/FIND-004 remain carry-forwards."
+  maintainability:
+    status: PASS
+    notes: "Clear CSP pattern comments. Named constant for retry interval. Retry loop scope deviation from story template is justified, documented, and consistent with AC8 requirement."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add detailed retry logging to DB writer goroutine (attempt counter, reconnect confirmation)"
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Address FIND-001 (defer Close unreachable via SIGINT) and add sync.WaitGroup for graceful shutdown"
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Address FIND-002 (context.Background() with no timeout in DB Connect) and FIND-004 (MQTT connect timeout)"
+      refs: ["cmd/mqtt2bdd/main.go", "internal/database/client.go", "internal/mqtt/client.go"]
