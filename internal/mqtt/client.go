@@ -6,26 +6,38 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
 )
 
-const qos0 = byte(0)
+const (
+	qos0                         = byte(0)
+	defaultMQTTReconnectInterval = 10 * time.Second
+)
 
 // Client wraps the Eclipse Paho MQTT client, providing connection management
 // and structured logging.
 type Client struct {
-	pahoClient mqtt.Client
-	brokerURL  string // pre-computed once at construction; avoids retaining cfg credentials
-	logger     *slog.Logger
+	pahoClient        mqtt.Client
+	brokerURL         string // pre-computed once at construction; avoids retaining cfg credentials
+	logger            *slog.Logger
+	subscribedTopic   string
+	subscribedHandler MessageHandler
 }
 
 // NewClient creates a new MQTT Client configured from cfg, using l for structured
 // logging. It does not establish a network connection — call Connect to do so.
 func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 	brokerURL := fmt.Sprintf("tcp://%s:%d", cfg.MQTTBroker, cfg.MQTTPort)
+
+	// c is initialised before opts so the connection-lost closure can capture it.
+	c := &Client{
+		brokerURL: brokerURL,
+		logger:    l,
+	}
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(brokerURL)
@@ -37,20 +49,15 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 		opts.SetPassword(cfg.MQTTPassword)
 	}
 
-	// Automatic reconnection is intentionally disabled here; it will be
-	// implemented as a manual reconnection loop in story 2.2.
 	opts.SetAutoReconnect(false)
 
-	// Log connection loss; reconnection logic is story 2.2.
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-		l.Error("MQTT connection lost", "error", err)
+		c.logger.Error("MQTT connection lost", "error", err)
+		go c.reconnectLoop()
 	})
 
-	return &Client{
-		pahoClient: mqtt.NewClient(opts),
-		brokerURL:  brokerURL,
-		logger:     l,
-	}
+	c.pahoClient = mqtt.NewClient(opts)
+	return c
 }
 
 // Connect establishes a TCP connection to the MQTT broker. It logs the attempt
@@ -93,6 +100,9 @@ func (c *Client) IsConnected() bool {
 // library — Subscribe returns immediately after the broker acknowledges the
 // subscription.
 func (c *Client) Subscribe(topic string, handler MessageHandler) error {
+	c.subscribedTopic = topic
+	c.subscribedHandler = handler
+
 	c.logger.Info("subscribing to MQTT topic", "topic", topic)
 	token := c.pahoClient.Subscribe(topic, qos0, func(_ mqtt.Client, msg mqtt.Message) {
 		handler(msg.Topic(), msg.Payload())
@@ -104,4 +114,29 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 	}
 	c.logger.Info("MQTT subscribed", "topic", topic)
 	return nil
+}
+
+// reconnectLoop retries connecting to the MQTT broker every defaultMQTTReconnectInterval
+// until a connection is re-established, then re-subscribes to the last registered topic.
+// Launched as a goroutine by the connection-lost handler.
+func (c *Client) reconnectLoop() {
+	for attempt := 1; ; attempt++ {
+		time.Sleep(defaultMQTTReconnectInterval)
+		c.logger.Info("Attempting MQTT reconnection", "attempt", attempt)
+
+		token := c.pahoClient.Connect()
+		<-token.Done()
+		if err := token.Error(); err != nil {
+			c.logger.Error("MQTT reconnection failed", "attempt", attempt, "error", err)
+			continue
+		}
+
+		c.logger.Info("MQTT reconnected successfully")
+		if c.subscribedHandler != nil {
+			if err := c.Subscribe(c.subscribedTopic, c.subscribedHandler); err != nil {
+				c.logger.Error("MQTT re-subscription failed after reconnect", "error", err)
+			}
+		}
+		return
+	}
 }
