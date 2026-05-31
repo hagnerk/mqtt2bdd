@@ -1,0 +1,60 @@
+schema: 1
+story: "2.3.1"
+story_title: "Remove Redundant Reconnection State Machine from dbWriterLoop"
+gate: PASS
+status_reason: "All 8 ACs verified. Pure deletion story — stateful inReconnect/attempt variables and 3 log lines removed, signature simplified, import cleaned. No logic changes, no observability loss. All toolchain checks clean in dev container."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-05-31T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-013: internal/config tests fail in dev container due to env var leakage (LOG_LEVEL=DEBUG, required vars set at container level). Pre-existing isolation issue, not introduced by this story."
+      - "FIND-012 carried forward: inline 'story 2.4' comment references instead of TODO(spydemon) format — pre-existing, low priority"
+      - "FIND-001, FIND-002, FIND-004, FIND-010, FIND-011 carried forward — all deferred to story 2.4 or future stories"
+
+quality_score: 100
+expires: "2026-06-14T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No new tests by design; deletion story with no new logic
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Deletion story. No new code paths or attack surface. Simpler function with fewer branches."
+  performance:
+    status: PASS
+    notes: "Inner retry loop executes fewer operations per iteration (no state variable writes). time.Sleep behavior unchanged."
+  reliability:
+    status: PASS
+    notes: "InsertMessage in queries.go:30 already logs ERROR on every failure — no observability loss from removing state machine. Retry-until-success guarantee preserved. Messages never discarded."
+  maintainability:
+    status: PASS
+    notes: "Cyclomatic complexity of dbWriterLoop reduced by 3 branches. Function is 9 lines, zero state, zero log calls. Easier to reason about and test."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "FIND-013: Fix internal/config test isolation — tests should run with a clean env, not inherit container runtime vars. Consider t.Setenv() cleanup or a dedicated test container without app env vars."
+      refs: ["internal/config/config_test.go"]
+    - action: "FIND-012: Replace 'story 2.4' inline comment references with // TODO(spydemon): format per coding-standards.md#comments"
+      refs: ["cmd/mqtt2bdd/main.go:23", "cmd/mqtt2bdd/main.go:63"]
+    - action: "Address FIND-001 (defer Close/Disconnect unreachable via select{}) and FIND-002 (context.Background() no timeout in DB Connect)"
+      refs: ["cmd/mqtt2bdd/main.go"]
+    - action: "Address FIND-004 (MQTT connect has no timeout via context)"
+      refs: ["internal/mqtt/client.go:Connect"]
+    - action: "FIND-010: Add subscription retry loop after reconnect in reconnectLoop"
+      refs: ["internal/mqtt/client.go:reconnectLoop"]
+    - action: "FIND-011: Add context.Context to reconnectLoop for graceful cancellation"
+      refs: ["internal/mqtt/client.go:reconnectLoop"]

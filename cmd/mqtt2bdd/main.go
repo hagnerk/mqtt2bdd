@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"log/slog"
 	"os"
 	"time"
 
@@ -22,25 +21,14 @@ var Version = "dev"
 
 // dbWriterLoop is the sole consumer of msgChan. It retries failed inserts until success,
 // ensuring no message is lost during a database outage. Exits when msgChan is closed (story 2.4).
-func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, l *slog.Logger) {
-	inReconnect := false
+func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client) {
 	for msg := range msgChan {
-		attempt := 0
 		for {
 			err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
 			if err == nil {
-				if inReconnect {
-					l.Info("Database reconnected successfully")
-					inReconnect = false
-				}
 				break
 			}
-			if !inReconnect {
-				l.Error("Database connection lost", "error", err)
-				inReconnect = true
-			}
-			attempt++
-			l.Info("Attempting database reconnection", "attempt", attempt)
+			// error already logged by InsertMessage; hold this message and retry after delay
 			time.Sleep(defaultRetryIntervalOnDatabaseFailure)
 		}
 	}
@@ -73,7 +61,7 @@ func main() {
 	msgChan := make(chan mqtt.Message, cfg.BufferSize)
 
 	// DB writer goroutine: sole consumer of msgChan, exits when channel closed (story 2.4).
-	go dbWriterLoop(msgChan, dbClient, l)
+	go dbWriterLoop(msgChan, dbClient)
 
 	mqttMessageHandler := func(topic string, payload []byte) {
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}
