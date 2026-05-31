@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -18,6 +19,32 @@ const defaultRetryIntervalOnDatabaseFailure = 10 * time.Second
 
 // Version is injected at build time via ldflags. Defaults to "dev" for local builds.
 var Version = "dev"
+
+// dbWriterLoop is the sole consumer of msgChan. It retries failed inserts until success,
+// ensuring no message is lost during a database outage. Exits when msgChan is closed (story 2.4).
+func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, l *slog.Logger) {
+	inReconnect := false
+	for msg := range msgChan {
+		attempt := 0
+		for {
+			err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
+			if err == nil {
+				if inReconnect {
+					l.Info("Database reconnected successfully")
+					inReconnect = false
+				}
+				break
+			}
+			if !inReconnect {
+				l.Error("Database connection lost", "error", err)
+				inReconnect = true
+			}
+			attempt++
+			l.Info("Attempting database reconnection", "attempt", attempt)
+			time.Sleep(defaultRetryIntervalOnDatabaseFailure)
+		}
+	}
+}
 
 func main() {
 	cfg, err := config.LoadConfig()
@@ -46,20 +73,7 @@ func main() {
 	msgChan := make(chan mqtt.Message, cfg.BufferSize)
 
 	// DB writer goroutine: sole consumer of msgChan, exits when channel closed (story 2.4).
-	// On write failure, the message is retained and retried until success so no message is
-	// lost during a database outage. Story 2.3 will add detailed retry logging.
-	go func() {
-		for msg := range msgChan {
-			for {
-				err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
-				if err == nil {
-					break
-				}
-				// error already logged by InsertMessage; hold this message and retry after delay
-				time.Sleep(defaultRetryIntervalOnDatabaseFailure)
-			}
-		}
-	}()
+	go dbWriterLoop(msgChan, dbClient, l)
 
 	mqttMessageHandler := func(topic string, payload []byte) {
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}

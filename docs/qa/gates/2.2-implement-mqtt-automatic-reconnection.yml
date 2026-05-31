@@ -15,8 +15,8 @@ risk_summary:
   recommendations:
     must_fix: []
     monitor:
-      - "Re-subscription failure after reconnect leaves client connected-but-not-subscribed with no retry — deferred to future story"
-      - "reconnectLoop has no context cancellation — deferred to graceful shutdown story"
+      - "FIND-010: Re-subscription failure after reconnect leaves client connected-but-not-subscribed with no retry — deferred to future story"
+      - "FIND-011: reconnectLoop has no context cancellation — deferred to graceful shutdown story"
       - "FIND-001, FIND-002, FIND-004 carried forward from 1.9/2.1 — unchanged"
 
 quality_score: 95
@@ -46,9 +46,9 @@ nfr_validation:
 recommendations:
   immediate: []
   future:
-    - action: "Add subscription retry loop: if c.Subscribe() fails after reconnect, retry with backoff rather than returning immediately"
+    - action: "FIND-010: Add subscription retry loop: if c.Subscribe() fails after reconnect, retry with backoff rather than returning immediately"
       refs: ["internal/mqtt/client.go:reconnectLoop"]
-    - action: "Add context.Context to reconnectLoop to support cancellation during graceful shutdown"
+    - action: "FIND-011: Add context.Context to reconnectLoop to support cancellation during graceful shutdown"
       refs: ["internal/mqtt/client.go:reconnectLoop"]
     - action: "Address FIND-001 (defer Close unreachable via SIGINT) and FIND-002 (context.Background() no timeout in DB Connect)"
       refs: ["cmd/mqtt2bdd/main.go", "internal/database/client.go"]
