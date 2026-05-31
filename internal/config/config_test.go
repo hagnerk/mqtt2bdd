@@ -17,6 +17,20 @@ func TestLoadConfig(t *testing.T) {
 		"POSTGRES_PASSWORD": "testpassword",
 	}
 
+	varToDeleteBeforeTests := []string{
+		"MQTT_BROKER",
+		"MQTT_PORT",
+		"MQTT_USERNAME",
+		"MQTT_PASSWORD",
+		"POSTGRES_HOST",
+		"POSTGRES_PORT",
+		"POSTGRES_DB",
+		"POSTGRES_USER",
+		"POSTGRES_PASSWORD",
+		"LOG_LEVEL",
+		"BUFFER_SIZE",
+	}
+
 	tests := []struct {
 		name    string
 		env     map[string]string
@@ -206,6 +220,9 @@ func TestLoadConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			for _, v := range varToDeleteBeforeTests {
+				t.Setenv(v, "")
+			}
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
