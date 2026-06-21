@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -26,6 +27,8 @@ type Client struct {
 	logger            *slog.Logger
 	subscribedTopic   string
 	subscribedHandler MessageHandler
+	shutdown          chan struct{} // closed by Disconnect to stop a running reconnectLoop
+	closeOnce         sync.Once     // guards closing shutdown exactly once
 }
 
 // NewClient creates a new MQTT Client configured from cfg, using l for structured
@@ -37,6 +40,7 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 	c := &Client{
 		brokerURL: brokerURL,
 		logger:    l,
+		shutdown:  make(chan struct{}),
 	}
 
 	opts := mqtt.NewClientOptions()
@@ -84,6 +88,8 @@ func (c *Client) Connect(ctx context.Context) error {
 // 250 milliseconds for any in-flight operations to complete.
 func (c *Client) Disconnect() {
 	const quiesceMs = 250
+	// Signal any running reconnectLoop to stop before tearing down the connection.
+	c.closeOnce.Do(func() { close(c.shutdown) })
 	c.pahoClient.Disconnect(quiesceMs)
 	c.logger.Info("MQTT disconnected")
 }
@@ -121,7 +127,12 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 // Launched as a goroutine by the connection-lost handler.
 func (c *Client) reconnectLoop() {
 	for attempt := 1; ; attempt++ {
-		time.Sleep(defaultMQTTReconnectInterval)
+		select {
+		case <-time.After(defaultMQTTReconnectInterval):
+		case <-c.shutdown:
+			c.logger.Info("MQTT reconnect cancelled, shutting down")
+			return
+		}
 		c.logger.Info("Attempting MQTT reconnection", "attempt", attempt)
 
 		token := c.pahoClient.Connect()

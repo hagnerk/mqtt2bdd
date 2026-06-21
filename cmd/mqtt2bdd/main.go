@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
@@ -16,11 +19,19 @@ import (
 // defaultRetryIntervalOnDatabaseFailure is the delay between insert retries in the DB writer goroutine.
 const defaultRetryIntervalOnDatabaseFailure = 10 * time.Second
 
+// defaultShutdownTimeout bounds how long the shutdown sequence waits for buffered
+// messages to drain before giving up. Aligns with the Docker stop grace period.
+const defaultShutdownTimeout = 30 * time.Second
+
+// defaultConnectTimeout bounds startup connection attempts so a hung broker or
+// database cannot block startup indefinitely.
+const defaultConnectTimeout = 10 * time.Second
+
 // Version is injected at build time via ldflags. Defaults to "dev" for local builds.
 var Version = "dev"
 
 // dbWriterLoop is the sole consumer of msgChan. It retries failed inserts until success,
-// ensuring no message is lost during a database outage. Exits when msgChan is closed (story 2.4).
+// ensuring no message is lost during a database outage. Exits when msgChan is closed during shutdown.
 func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client) {
 	for msg := range msgChan {
 		for {
@@ -44,24 +55,34 @@ func main() {
 	l.Info("MQTT2BDD starting", "version", Version)
 
 	mqttClient := mqtt.NewClient(cfg, l)
-	if err := mqttClient.Connect(context.Background()); err != nil {
+	mqttCtx, mqttCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
+	err = mqttClient.Connect(mqttCtx)
+	mqttCancel()
+	if err != nil {
 		os.Exit(1)
 	}
-	defer mqttClient.Disconnect()
 
 	dbClient := database.NewClient(cfg, l)
-	if err := dbClient.Connect(context.Background()); err != nil {
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
+	err = dbClient.Connect(dbCtx)
+	dbCancel()
+	if err != nil {
 		os.Exit(1)
 	}
-	defer dbClient.Close()
 
 	// msgChan decouples MQTT message reception from database writes (Go CSP pattern).
 	// Producer: MQTT message handler (Paho callback goroutine).
 	// Consumer: DB writer goroutine below.
 	msgChan := make(chan mqtt.Message, cfg.BufferSize)
 
-	// DB writer goroutine: sole consumer of msgChan, exits when channel closed (story 2.4).
-	go dbWriterLoop(msgChan, dbClient)
+	// DB writer goroutine: sole consumer of msgChan, exits when channel is closed.
+	// The WaitGroup lets the shutdown sequence wait for the loop to drain and finish.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dbWriterLoop(msgChan, dbClient)
+	}()
 
 	mqttMessageHandler := func(topic string, payload []byte) {
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}
@@ -77,5 +98,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	select {} // Block until process is killed — signal handling added in story 2.4
+	// Block until a shutdown signal arrives. Buffered (cap 1) so the signal is not
+	// missed if it fires before this goroutine reaches the receive.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	sig := <-sigChan
+	l.Info("Shutdown signal received, flushing buffered messages", "signal", sig.String())
+
+	// Ordered teardown (order is required for correctness, not stylistic):
+	mqttClient.Disconnect()  // Stop receiving new messages before closing the channel.
+	buffered := len(msgChan) // No producers remain, so this is the count awaiting flush.
+	close(msgChan)           // Signal the DB writer to drain and exit.
+
+	// Wait for the writer to finish, racing the shutdown timeout.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		wg.Wait()
+	}()
+	select {
+	case <-drained:
+		l.Info("Flushed buffered messages", "count", buffered)
+	case <-time.After(defaultShutdownTimeout):
+		l.Warn("Shutdown timeout exceeded; some buffered messages may not have been flushed", "buffered", buffered)
+	}
+
+	dbClient.Close()            // Close the pool only after the drain resolves.
+	l.Info("Shutdown complete") // Natural return ⇒ exit code 0.
 }

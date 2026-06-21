@@ -1,0 +1,58 @@
+schema: 1
+story: "2.4"
+story_title: "Implement Graceful Shutdown Handler"
+gate: CONCERNS
+status_reason: "All 15 ACs implemented and toolchain is green in the dev container. One reachable reliability edge case: under a DB outage with a full buffer, close(msgChan) can panic a blocked MQTT producer goroutine instead of exiting gracefully via the timeout WARN path."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-06-21T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "FIND-014"
+    severity: medium
+    finding: "Shutdown can panic with 'send on closed channel'. The MQTT message handler does a blocking send (cmd/mqtt2bdd/main.go:93) when the buffer is full. During shutdown, mqttClient.Disconnect() only quiesces 250ms; if the DB is down (dbWriterLoop stuck in its 10s retry) and the buffer is full, a Paho callback goroutine remains blocked on the send when close(msgChan) (main.go:111) executes, panicking the process. This is exactly the degraded scenario (DB down + sustained load) that the bounded shutdown timeout exists to handle gracefully."
+    suggested_owner: dev
+    refs: ["cmd/mqtt2bdd/main.go:87-95", "cmd/mqtt2bdd/main.go:111"]
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-014: send-on-closed-channel panic when buffer is full at shutdown while DB is down. Narrow but reachable; undermines AC11's graceful-timeout intent."
+      - "Graceful shutdown has zero automated coverage by design (orchestration in main()); critical data-safety path relies on manual E2E until TestGracefulShutdown lands in Story 3.3."
+
+quality_score: 90
+expires: "2026-07-05T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No new tests by design; shutdown orchestration in main() is not unit-testable without an Application refactor (out of scope). Integration test deferred to Story 3.3.
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    ac_gaps: []  # All ACs implemented; AC10/AC12 validated via manual E2E + toolchain rather than automated tests
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new attack surface. No credential handling changes. Signal handling and teardown only."
+  performance:
+    status: PASS
+    notes: "Shutdown-path code, negligible runtime cost. Startup connect now bounded by defaultConnectTimeout (10s); shutdown bounded by defaultShutdownTimeout (30s)."
+  reliability:
+    status: CONCERNS
+    notes: "Ordered teardown (disconnect → snapshot → close → bounded WaitGroup drain → close pool) is correct and the timeout prevents an indefinite hang. However FIND-014 can turn a graceful timeout into a process panic under DB-outage + full-buffer. reconnectLoop cancellation (FIND-011) and idempotent close via sync.Once are correctly implemented."
+  maintainability:
+    status: PASS
+    notes: "main() shutdown sequence is clear and well-commented; behaviour-only comments (no stale story refs). dbWriterLoop kept lean. Named constants, three-block imports, consistent 'c' receiver, no panic()/magic numbers."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "FIND-014: prevent send-on-closed-channel at shutdown. Make the producer unblock on shutdown instead of being closed under it — e.g. select on both `msgChan <- msg` and a `done`/shutdown channel in the handler, or stop producers before close(msgChan). Add a build-tagged integration test that fills the buffer with the DB down, then sends SIGTERM, asserting a clean WARN-and-exit (no panic)."
+      refs: ["cmd/mqtt2bdd/main.go:87-95", "cmd/mqtt2bdd/main.go:111"]
+    - action: "Story 3.3: implement TestGracefulShutdown integration test to cover the flush and bounded-timeout paths now validated only manually."
+      refs: ["docs/architecture/test-strategy-and-standards.md#integration-tests"]
+    - action: "FIND-013 (carried): internal/config tests leak env vars in some containers (passed in mqtt2bdd-dev-go-dev this run). Isolate with t.Setenv cleanup."
+      refs: ["internal/config/config_test.go"]
