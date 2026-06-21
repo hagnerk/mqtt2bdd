@@ -30,17 +30,38 @@ const defaultConnectTimeout = 10 * time.Second
 // Version is injected at build time via ldflags. Defaults to "dev" for local builds.
 var Version = "dev"
 
-// dbWriterLoop is the sole consumer of msgChan. It retries failed inserts until success,
-// ensuring no message is lost during a database outage. Exits when msgChan is closed during shutdown.
-func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client) {
-	for msg := range msgChan {
-		for {
-			err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
-			if err == nil {
-				break
+// insertWithRetry writes a single message, retrying every defaultRetryIntervalOnDatabaseFailure
+// until the insert succeeds, so no message is lost during a database outage.
+func insertWithRetry(dbClient *database.Client, msg mqtt.Message) {
+	for {
+		err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
+		if err == nil {
+			return
+		}
+		// error already logged by InsertMessage; hold this message and retry after delay
+		time.Sleep(defaultRetryIntervalOnDatabaseFailure)
+	}
+}
+
+// dbWriterLoop is the sole consumer of msgChan. It writes each message (retrying until success,
+// ensuring no message is lost during a database outage). On shutdown, done is closed: the loop
+// drains any messages still buffered and then exits. msgChan is never closed, so producers can
+// never panic with "send on closed channel".
+func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <-chan struct{}) {
+	for {
+		select {
+		case msg := <-msgChan:
+			insertWithRetry(dbClient, msg)
+		case <-done:
+			// Shutdown requested: drain the remaining buffered messages, then exit.
+			for {
+				select {
+				case msg := <-msgChan:
+					insertWithRetry(dbClient, msg)
+				default:
+					return
+				}
 			}
-			// error already logged by InsertMessage; hold this message and retry after delay
-			time.Sleep(defaultRetryIntervalOnDatabaseFailure)
 		}
 	}
 }
@@ -75,13 +96,17 @@ func main() {
 	// Consumer: DB writer goroutine below.
 	msgChan := make(chan mqtt.Message, cfg.BufferSize)
 
-	// DB writer goroutine: sole consumer of msgChan, exits when channel is closed.
+	// done is closed once at shutdown to signal both the DB writer (drain and exit) and any
+	// producer blocked on a full buffer (stop waiting). msgChan itself is never closed.
+	done := make(chan struct{})
+
+	// DB writer goroutine: sole consumer of msgChan, drains and exits when done is closed.
 	// The WaitGroup lets the shutdown sequence wait for the loop to drain and finish.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		dbWriterLoop(msgChan, dbClient)
+		dbWriterLoop(msgChan, dbClient, done)
 	}()
 
 	mqttMessageHandler := func(topic string, payload []byte) {
@@ -90,7 +115,12 @@ func main() {
 		case msgChan <- msg:
 		default:
 			l.Warn("message buffer full, blocking until space available", "buffer_size", cfg.BufferSize)
-			msgChan <- msg // block until DB writer consumes a slot
+			// Block until the DB writer frees a slot, or shutdown begins (drop the message
+			// rather than block on a channel that is draining for the last time).
+			select {
+			case msgChan <- msg:
+			case <-done:
+			}
 		}
 	}
 	if err := mqttClient.Subscribe("#", mqttMessageHandler); err != nil {
@@ -106,9 +136,9 @@ func main() {
 	l.Info("Shutdown signal received, flushing buffered messages", "signal", sig.String())
 
 	// Ordered teardown (order is required for correctness, not stylistic):
-	mqttClient.Disconnect()  // Stop receiving new messages before closing the channel.
+	mqttClient.Disconnect()  // Stop receiving new messages before signalling the writer.
 	buffered := len(msgChan) // No producers remain, so this is the count awaiting flush.
-	close(msgChan)           // Signal the DB writer to drain and exit.
+	close(done)              // Signal the DB writer to drain and exit, and unblock any producer.
 
 	// Wait for the writer to finish, racing the shutdown timeout.
 	drained := make(chan struct{})
