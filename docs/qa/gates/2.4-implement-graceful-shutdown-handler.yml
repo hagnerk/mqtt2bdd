@@ -1,58 +1,89 @@
 schema: 1
 story: "2.4"
 story_title: "Implement Graceful Shutdown Handler"
-gate: CONCERNS
-status_reason: "All 15 ACs implemented and toolchain is green in the dev container. One reachable reliability edge case: under a DB outage with a full buffer, close(msgChan) can panic a blocked MQTT producer goroutine instead of exiting gracefully via the timeout WARN path."
+gate: PASS
+status_reason: "FIND-014 is resolved by construction — msgChan is never closed anywhere, so 'send on closed channel' is impossible, and blocked producers now unblock via the done channel. All 15 ACs met, toolchain clean (including -race build and staticcheck). Two low-severity follow-ups remain, neither blocking."
 reviewer: "Quinn (Test Architect)"
-updated: "2026-06-21T00:00:00Z"
+updated: "2026-07-25T00:00:00Z"
 
 waiver: { active: false }
 
 top_issues:
+  - id: "FIND-015"
+    severity: low
+    finding: "Silent message drop at shutdown. When a producer blocked on a full buffer unblocks via <-done (cmd/mqtt2bdd/main.go:122), its in-flight message is discarded with no log line. Dropping is the correct trade-off (the alternative was the FIND-014 panic), but the story's premise is 'no data is lost when the container is stopped', so the drop must be observable. Suggested: `case <-done: l.Warn(\"message dropped at shutdown, buffer was full\", \"topic\", topic)`."
+    suggested_owner: dev
+    refs: ["cmd/mqtt2bdd/main.go:118-123"]
+  - id: "FIND-016"
+    severity: low
+    finding: "Drain path is not bounded by a context. insertWithRetry uses context.Background() (cmd/mqtt2bdd/main.go:37) and a bare time.Sleep (main.go:42). Consequences: (a) the drain cannot be cut short by done, burning a full 10s sleep per failing message inside the 30s window; (b) after the AC11 timeout, dbClient.Close() -> pgxpool.Close() blocks until in-flight queries return, so a hung (rather than refused) DB connection can push process exit past the 30s bound. Largely pre-existing (context.Background() in the write path dates from story 1.8/2.3), but story 2.4 is where it acquires a deadline to violate. Suggested: per-insert context.WithTimeout, and select on done instead of time.Sleep."
+    suggested_owner: dev
+    refs: ["cmd/mqtt2bdd/main.go:33-44", "cmd/mqtt2bdd/main.go:156"]
+
+resolved_issues:
   - id: "FIND-014"
     severity: medium
-    finding: "Shutdown can panic with 'send on closed channel'. The MQTT message handler does a blocking send (cmd/mqtt2bdd/main.go:93) when the buffer is full. During shutdown, mqttClient.Disconnect() only quiesces 250ms; if the DB is down (dbWriterLoop stuck in its 10s retry) and the buffer is full, a Paho callback goroutine remains blocked on the send when close(msgChan) (main.go:111) executes, panicking the process. This is exactly the degraded scenario (DB down + sustained load) that the bounded shutdown timeout exists to handle gracefully."
-    suggested_owner: dev
-    refs: ["cmd/mqtt2bdd/main.go:87-95", "cmd/mqtt2bdd/main.go:111"]
+    resolution: "Fixed in commit af378e4. close(msgChan) removed entirely (verified: the only closes in the tree are close(done) at main.go:141, defer close(drained) at main.go:146, and close(c.shutdown) at internal/mqtt/client.go:92). A dedicated done channel now signals shutdown; dbWriterLoop selects on msgChan/done and drains buffered messages via a non-blocking inner loop before exiting; the producer's full-buffer fallback selects on `msgChan <- msg` / `<-done`. The panic is eliminated by construction rather than by narrowing its window. AC4/AC5/AC6/AC7 semantics preserved."
+    verified_by: "Quinn (Test Architect), 2026-07-25"
+  - id: "FIND-013"
+    severity: low
+    resolution: "Recommend closing as not-a-defect. internal/config/config_test.go clears variables with t.Setenv(v, \"\"), and internal/config/config.go reads exclusively via os.Getenv (never os.LookupEnv), so unset and empty-string are indistinguishable to the code under test — the isolation is sound as written. Tests passed in mqtt2bdd-dev-go-dev (2026-06-21) and on the host (2026-07-25); the finding has never reproduced."
+    verified_by: "Quinn (Test Architect), 2026-07-25"
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  totals: { critical: 0, high: 0, medium: 0, low: 3 }
   recommendations:
     must_fix: []
     monitor:
-      - "FIND-014: send-on-closed-channel panic when buffer is full at shutdown while DB is down. Narrow but reachable; undermines AC11's graceful-timeout intent."
-      - "Graceful shutdown has zero automated coverage by design (orchestration in main()); critical data-safety path relies on manual E2E until TestGracefulShutdown lands in Story 3.3."
+      - "FIND-015: shutdown-time message drops are silent; no operator-visible record of data loss under buffer-full shutdown."
+      - "FIND-016: unbounded insert context means the 30s shutdown bound is best-effort against a hung (not refused) database."
+      - "Graceful shutdown still has zero automated coverage by design (orchestration lives in main()); this critical data-safety path relies on manual E2E until TestGracefulShutdown lands in Story 3.3."
 
-quality_score: 90
-expires: "2026-07-05T00:00:00Z"
+quality_score: 95
+expires: "2026-08-08T00:00:00Z"
 
 evidence:
   tests_reviewed: 0  # No new tests by design; shutdown orchestration in main() is not unit-testable without an Application refactor (out of scope). Integration test deferred to Story 3.3.
-  risks_identified: 2
+  risks_identified: 3
   trace:
     ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    ac_gaps: []  # All ACs implemented; AC10/AC12 validated via manual E2E + toolchain rather than automated tests
+    ac_gaps: []  # All ACs implemented. AC10/AC12 validated via manual E2E + toolchain rather than automated tests.
+  ac_notes:
+    - ac: 4
+      note: "AC4's literal wording ('Close message channel to signal database writer goroutine') is satisfied in intent, not literally: the writer is signalled via a dedicated done channel instead of closing msgChan. The deviation is correct and necessary — the literal implementation is precisely what produced FIND-014. Flagged for SM/PO awareness, not counted as a gap."
+
+toolchain_validation:
+  environment: "host, go1.26.3 darwin/arm64 (2026-07-25)"
+  results:
+    - "gofmt -l . -> clean"
+    - "go vet ./... -> no warnings"
+    - "staticcheck ./... (2025.1.1) -> exit 0, no warnings"
+    - "go build ./... -> clean"
+    - "go build -race ./... -> clean"
+    - "go test ./... -> all pass (internal/config, internal/logger; no test files in cmd/mqtt2bdd, internal/database, internal/mqtt)"
 
 nfr_validation:
   security:
     status: PASS
-    notes: "No new attack surface. No credential handling changes. Signal handling and teardown only."
+    notes: "Unchanged from the previous review. The fix touches shutdown signalling only. No credential handling changes, no new attack surface."
   performance:
     status: PASS
-    notes: "Shutdown-path code, negligible runtime cost. Startup connect now bounded by defaultConnectTimeout (10s); shutdown bounded by defaultShutdownTimeout (30s)."
+    notes: "The select-per-message in dbWriterLoop replaces a range and is not measurable against a database round-trip. Startup bounded by defaultConnectTimeout (10s); shutdown bounded by defaultShutdownTimeout (30s) in all practical cases — see FIND-016 for the narrow exception."
   reliability:
-    status: CONCERNS
-    notes: "Ordered teardown (disconnect → snapshot → close → bounded WaitGroup drain → close pool) is correct and the timeout prevents an indefinite hang. However FIND-014 can turn a graceful timeout into a process panic under DB-outage + full-buffer. reconnectLoop cancellation (FIND-011) and idempotent close via sync.Once are correctly implemented."
+    status: PASS
+    notes: "Upgraded from CONCERNS. The send-on-closed-channel panic is eliminated by construction, and the compound degraded state (DB down + full buffer + shutdown) now resolves through the intended WARN-and-exit path. Ordered teardown, sync.Once-guarded MQTT shutdown, cancellable reconnectLoop, and the WaitGroup-vs-timeout race all remain correct. No new failure mode introduced by the fix."
   maintainability:
     status: PASS
-    notes: "main() shutdown sequence is clear and well-commented; behaviour-only comments (no stale story refs). dbWriterLoop kept lean. Named constants, three-block imports, consistent 'c' receiver, no panic()/magic numbers."
+    notes: "The insertWithRetry extraction states the retry policy once and shares it between the steady-state and drain paths, so the two cannot diverge. Comments explain why msgChan is never closed — the non-obvious invariant a future reader would otherwise undo. Named constants, three-block imports, consistent 'c' receiver, no panic()/magic numbers."
 
 recommendations:
   immediate: []
   future:
-    - action: "FIND-014: prevent send-on-closed-channel at shutdown. Make the producer unblock on shutdown instead of being closed under it — e.g. select on both `msgChan <- msg` and a `done`/shutdown channel in the handler, or stop producers before close(msgChan). Add a build-tagged integration test that fills the buffer with the DB down, then sends SIGTERM, asserting a clean WARN-and-exit (no panic)."
-      refs: ["cmd/mqtt2bdd/main.go:87-95", "cmd/mqtt2bdd/main.go:111"]
-    - action: "Story 3.3: implement TestGracefulShutdown integration test to cover the flush and bounded-timeout paths now validated only manually."
-      refs: ["docs/architecture/test-strategy-and-standards.md#integration-tests"]
-    - action: "FIND-013 (carried): internal/config tests leak env vars in some containers (passed in mqtt2bdd-dev-go-dev this run). Isolate with t.Setenv cleanup."
-      refs: ["internal/config/config_test.go"]
+    - action: "FIND-015: log a WARN when a message is dropped because a producer unblocked on done, so shutdown-time data loss is observable rather than silent."
+      refs: ["cmd/mqtt2bdd/main.go:118-123"]
+    - action: "FIND-016: bound the insert path with a per-insert context.WithTimeout and replace the bare time.Sleep with a select on done, so the drain honours the shutdown deadline and dbClient.Close() cannot block past it."
+      refs: ["cmd/mqtt2bdd/main.go:33-44", "cmd/mqtt2bdd/main.go:156"]
+    - action: "Story 3.3: implement a build-tagged TestGracefulShutdown covering both the flush and bounded-timeout paths, and pinning FIND-014 against regression. A //go:build integration harness already exists in internal/database/integration_test.go — follow that precedent rather than inventing a new one."
+      refs: ["internal/database/integration_test.go", "docs/architecture/test-strategy-and-standards.md#integration-tests"]
+    - action: "FIND-010 (carried, still open): reconnectLoop re-subscribes after reconnect but a failed re-subscription only logs an ERROR and returns, leaving the client connected yet silently receiving nothing, permanently. Needs a retry."
+      refs: ["internal/mqtt/client.go:146-149"]
