@@ -1,0 +1,133 @@
+schema: 1
+story: "3.2"
+story_title: "Create Production Docker Compose Configuration"
+gate: PASS
+status_reason: "All 19 ACs independently re-verified live — the production image was rebuilt, the full three-service stack was deployed with a throwaway credential, a real MQTT message was published through the production broker and read back from the production database, and every previously-open finding (FIND-022/023/025, AC11 headroom) is confirmed closed. No new defect found; the three open items (broker-authentication deferral, two pre-existing documentary contradictions) are correctly disclosed, non-blocking and already routed by the PO's own ruling."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-25T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+resolved_issues:
+  - id: "FIND-025"
+    severity: low
+    finding: "10 s container stop grace truncated the app's 30 s drain bound."
+    resolution: "docker-compose.prod.yml sets stop_grace_period: 30s on the mqtt2bdd service (AC13). Re-verified live: docker inspect --format '{{.Config.StopTimeout}}' reads 30, and docker stop produced the full shutdown_signal -> disconnected(mqtt) -> flush_complete -> disconnected(database) -> shutdown_complete sequence with exit code 0."
+    refs: ["docker-compose.prod.yml:113-118"]
+  - id: "FIND-022"
+    severity: low
+    finding: ".dockerignore's environment-file globs were root-anchored; the comment overstated their reach."
+    resolution: "Recursive forms (**/.env, **/.env.*, **/*.env) added alongside the root-anchored ones, with a corrected comment (AC14). Re-verified adversarially in this review, not merely re-read: planted internal/.env and internal/qaprobe/.env, built a probe image that COPYs the whole context, and confirmed find /ctx -name '*.env' -o -name '.env*' returns nothing. .idea/ and *.pid also added as the hygiene nit requested."
+    refs: [".dockerignore:10-24"]
+  - id: "FIND-023"
+    severity: low
+    finding: "The runtime stage was unnamed, so --target runtime did not resolve and BuildKit labelled it stage-1."
+    resolution: "Dockerfile:28 now reads FROM alpine:3.23 AS runtime (AC15). Re-verified: the rebuild in this review reused the cached runtime stage under its new name, confirming the layer graph is unaffected by the rename, and the image size is unchanged."
+    refs: ["Dockerfile:28"]
+  - id: "AC11-headroom"
+    severity: low
+    finding: "AC16 required the image size to be re-measured after this story's rebuild rather than inherited from Story 3.1's figure."
+    resolution: "Re-measured independently a third time (Dev, PO, and this review each rebuilt separately): 18,554,844 bytes, identical across all three. Margins: 7.23% decimal / 11.52% binary against the 20 MB budget."
+    refs: ["docker-compose.prod.yml", "Dockerfile"]
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 3 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Broker authentication (allow_anonymous true) remains deferred with no approved home. Assessed in this review as sound given the documented threat model and the fact dev/mosquitto/mosquitto.conf has carried the identical posture since Story 1.1 — this story does not introduce new exposure. Revisit if the stack is ever deployed beyond a trusted LAN."
+      - "docs/architecture/source-tree.md still omits dev/Dockerfile.dev. Pre-existing since Story 1.1, confirmed real, not created by this story, correctly outside AC18's six-edit ceiling. Unowned."
+      - "README.md's Getting Started section still reads the legacy hyphenated `docker-compose up --build`, contradicting this story's own `docker compose` convention two sections down in the same file. Confirmed real. Routed to Story 3.5, which owns that section."
+
+quality_score: 100
+expires: "2026-08-08T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No automated test added, correctly — no Go code is written and a Compose file is not assertable by the Go test framework. The 4 existing test packages were re-run as a regression check, independently, from this review.
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "GIVEN docker-compose.prod.yml, WHEN it is read, THEN it defines exactly three services: postgres, mosquitto, mqtt2bdd. Verified by reading the shipped file and by docker compose ps showing three running services. The AC1-vs-architecture deviation (three services here, one in infrastructure-and-deployment.md's app-only reading) was independently re-derived: database-schema.md's cron jobs really do reference a container that cannot exist under the app-only reading, so the PRD is internally consistent and the architecture document set was not. PRD wins; AC18 reconciles the architecture. Correct."
+    - ac: 2
+      note: "GIVEN the postgres service, WHEN it is deployed, THEN it runs postgres:15-alpine with a named volume for /var/lib/postgresql/data. Verified live: the container started, initialised an empty data directory, ran 01-schema.sql, and reached healthy. mqtt2bdd-prod-pgdata existed as a named volume (docker volume ls) without the mqtt2bdd-prod_ Compose prefix."
+    - ac: 3
+      note: "GIVEN the mosquitto service, WHEN it is deployed, THEN it runs eclipse-mosquitto:2 with a read-only config mount and a named data volume. Verified live and the broker version measured directly: docker exec mqtt2bdd-prod-mosquitto mosquitto -h -> mosquitto version 2.1.2, matching the tech-stack.md correction this story makes (AC18e)."
+    - ac: 4
+      note: "GIVEN the mqtt2bdd service's build block, WHEN the stack is built, THEN it builds from the production Dockerfile (not dev/Dockerfile.dev) with VERSION passed as a build arg. Verified: docker logs line 1 reads event=starting version=0.1.0 (not version=dev), and the OCI label reads 0.1.0 — both hops of the four-hop chain in Dev Notes confirmed live."
+    - ac: 5
+      note: "GIVEN the three container_name declarations, WHEN docker ps is read, THEN the containers are named mqtt2bdd-prod-postgres, mqtt2bdd-prod-mosquitto, mqtt2bdd-prod-app. Verified directly in docker compose ps output during this review."
+    - ac: 6
+      note: "GIVEN .env.prod.example, WHEN the mqtt2bdd service's environment block is read, THEN every one of the eleven application variables is present with a sensible default or a fail-loud guard. Verified: the environment: block matches the eleven os.Getenv sites in internal/config/config.go exactly, cross-checked in this review by re-reading the file (no twelfth site exists)."
+    - ac: 7
+      note: "GIVEN the networks: block, WHEN the stack is deployed, THEN all three services share one bridge network named exactly mqtt2bdd-prod-network (no Compose prefix). Verified: docker network ls during the live deployment showed mqtt2bdd-prod-network with no _-prefixed duplicate, confirming the explicit name: key avoids the prefix trap Story 3.1 hit."
+    - ac: 8
+      note: "GIVEN three healthcheck: blocks, WHEN the stack runs, THEN each probe is executed and reports true status. All three re-run independently inside their containers in this review (not just observed via docker compose ps): postgres's pg_isready, mosquitto's mosquitto_sub against the retained $SYS/broker/uptime topic (0.04 s), and mqtt2bdd's own netstat -tn socket-table read, with the probe command run by hand confirming $$MQTT_PORT survives Compose parsing and expands to 1883 in the container's own shell. Both stated limitations (cannot detect FIND-010; does not self-heal) are accurate and are stated in the compose file and the README as required."
+    - ac: 9
+      note: "GIVEN restart: unless-stopped on all three services, WHEN the stack is read, THEN all three carry the same policy. Verified by reading the shipped file; not independently exercised via an actual daemon restart in this review, matching the precedent set by prior stories' reviews of this AC."
+    - ac: 10
+      note: "GIVEN .env.prod.example, WHEN it is read, THEN it documents every variable with a description, default and safe example, and carries a placeholder rather than a real password. Verified: POSTGRES_PASSWORD=<replace_with_strong_password>, and the file is tracked in git (git check-ignore .env.prod.example exits 1, confirmed in this review)."
+    - ac: 11
+      note: "GIVEN the full stack, WHEN it is deployed and driven end to end, THEN a published MQTT message persists to PostgreSQL. Verified live in this review: mosquitto_pub through the production broker produced event=message_received then event=write_success in the app's log, and exactly one row was read back from mqtt2bdd-prod-postgres for sensor='qa/3.2/probe'. Cross-checked against mqtt2bdd-dev-postgres in the same instant: 112 rows, 0 matching qa/3.2/probe — the write reached the production database only."
+    - ac: 12
+      note: "GIVEN README.md, WHEN it is read, THEN a Production Deployment section exists after Build with configure/deploy/verify/stop instructions, the anonymous-broker security note, and the health-check-is-not-self-healing note. Verified by reading the shipped file; both PO-required sentences are present and match Dev Notes verbatim."
+    - ac: 13
+      note: "GIVEN stop_grace_period: 30s on the mqtt2bdd service, WHEN docker stop is issued, THEN the container is given 30 s before SIGKILL and Config.StopTimeout reads 30. Verified live: docker inspect read Grace=30, and docker stop produced exit code 0 with the full graceful sequence in the happy-path timing (well under 30 s). The unhappy path (a DB outage occupying the full drain) was not artificially induced in this review either, matching the precedent of the 3.1 review; the load-bearing fact this AC requires — the configured grace is 30 s, not Docker's 10 s default — is directly confirmed."
+    - ac: 14
+      note: "GIVEN .dockerignore's amended env-file block, WHEN a nested .env file is planted, THEN it is excluded from the build context. Verified adversarially in this review: internal/.env and internal/qaprobe/.env were planted, a probe image built to enumerate the actual context, and find across the probe image for *.env / .env* returned nothing. Also verified the prod/ exclusion added by the PO at validation does not remove anything the build needs — the same probe confirmed no prod/ file enters the context, and the build itself (which does need go.mod, go.sum, cmd/, internal/) succeeded throughout this review."
+    - ac: 15
+      note: "GIVEN Dockerfile:28, WHEN docker build --target runtime is run, THEN it resolves. Verified in this review's rebuild: BuildKit reused the cached runtime stage under its new name (confirming the rename does not perturb the layer graph or the measured image size)."
+    - ac: 16
+      note: "GIVEN the rebuilt image, WHEN its size is measured, THEN it is re-measured rather than inherited. Verified independently a third time in this review: 18,554,844 bytes, identical to both the Dev's and the PO's figures. Margins recorded: 7.23% decimal, 11.52% binary."
+    - ac: 17
+      note: "GIVEN .gitignore's amended environment group, WHEN .env.prod and .env.prod.example are each tested, THEN the former is ignored and the latter is not. Verified in both directions in this review, independently of the Dev's and PO's own tests: git check-ignore -v .env.prod names the rule; git check-ignore .env.prod.example exits 1 with no output."
+    - ac: 18
+      note: "GIVEN the six enumerated architecture edits, WHEN the three shard files are read, THEN all six are present, factually correct, and bounded. Verified by reading the live files in this review (not the diff alone): source-tree.md's prod/ block and .env.prod.example entry; infrastructure-and-deployment.md's Production Environment note, Backup Strategy sentence, and Compose version correction; tech-stack.md's MQTT Broker version/purpose cells and Container Orchestration version cell. The Compose version (~5.1.2) and Mosquitto version (~2.1.2) were both independently re-measured live in this review and match the corrected cells exactly. No section rewritten, no snippet deleted, nothing renumbered."
+    - ac: 19
+      note: "GIVEN the logging: and deploy.resources blocks, WHEN the running mqtt2bdd container is inspected, THEN NanoCpus=500000000 and Memory=268435456, and all three containers show json-file logging with max-size=10m/max-file=3. Verified live via docker inspect in this review, independently of the Dev's and PO's own readings. No claim made for reservations, consistent with the story's own scope."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "SEC-001 holds: .env.prod was gitignored before this review created it (verified in-sequence), never entered the build context, and was deleted at cleanup — a real credential never touched a committed artefact. AC14's recursive globs were probed adversarially with two planted nested decoys and closed the depth gap FIND-022 raised. The broker-authentication deferral (allow_anonymous true, port published to host) was independently assessed: dev/mosquitto/mosquitto.conf has carried the identical posture since Story 1.1, so this story introduces no new exposure pattern, and both PO-required consequence statements (broker config comment, README Security paragraph) are present and accurate. Not raised to CONCERNS — the posture is consistent with the documented threat model and the escape hatch (MQTT_USERNAME/MQTT_PASSWORD) is real and already wired."
+  performance:
+    status: PASS
+    notes: "Image headroom re-measured independently at 7.23% decimal / 11.52% binary against the 20 MB target — identical to the Dev's and PO's figures, confirming the AC15 rename does not perturb the build. deploy.resources.limits (0.5 CPU / 256 M) verified applied via docker inspect. The MQTT write path observed duration_ms=11 in this review's own probe, consistent with prior stories' measurements and showing no run-time regression from this story's YAML-only changes."
+  reliability:
+    status: PASS
+    notes: "All three health-check probes re-verified working from inside their own containers, including the load-bearing $$ escaping in the mqtt2bdd probe. depends_on: service_healthy gating observed live (mosquitto and postgres reached healthy before mqtt2bdd started). Graceful shutdown produced the full sequence with exit code 0 and a confirmed 30 s stop_grace_period (Config.StopTimeout=30), closing FIND-025. restart: unless-stopped is present on all three services per the shipped file, not independently exercised via a daemon restart in this review. The two admitted AC8 limitations (cannot detect a failed re-subscription; does not self-heal) are honestly disclosed in the compose file and the README rather than glossed over."
+  maintainability:
+    status: PASS
+    notes: "Every non-obvious line in the shipped compose file carries the reason it exists, matching the Dev Notes reference content verbatim by diff. The six AC18 architecture edits keep the sharded documents describing the artefact that actually shipped, and the scope guard (facts, not arguments) held under direct reading. Two pre-existing documentary contradictions were confirmed real but correctly left alone and routed: dev/Dockerfile.dev missing from source-tree.md (unowned, pre-dates this story), and README's Getting Started retaining the legacy `docker-compose up --build` form (routed to Story 3.5, which owns that section)."
+
+testability:
+  controllability: "Good. Every host, port and credential in the compose file is a variable with a documented default; POSTGRES_PASSWORD is the one exception and uses the :? guard, verified in this review to fail loudly and by name when unset. The parameterised host ports let this review's throwaway stack coexist with the live dev stack without touching it."
+  observability: "Good, and the reason this review could be fully live rather than partly inferred. Every AC leaves a machine-readable trace on the running containers — docker inspect for hardening, grace period and resource limits; docker logs for the structured startup/shutdown/write events; docker image inspect for size and labels — so nothing had to be taken on trust."
+  debuggability: "Adequate. The mqtt2bdd container retains busybox (inherited from the 3.1 image), so `docker exec ... sh` gave a shell for the probe re-runs in this review. read_only: true and the non-root user did not impede diagnostic access to /proc/net/tcp, which is world-readable."
+
+cleanup_verification:
+  note: "Every artefact this review created was removed and the environment was returned to its starting state, confirmed by re-measurement rather than assertion."
+  results:
+    - "docker compose -f docker-compose.prod.yml --env-file .env.prod down -v: all 3 containers, both named volumes (mqtt2bdd-prod-pgdata, mqtt2bdd-prod-mosquitto-data) and the network removed."
+    - "docker image rm mqtt2bdd:0.1.0: untagged and deleted."
+    - "rm -f .env.prod: confirmed absent via ls."
+    - "Adversarial decoys internal/.env and internal/qaprobe/.env, plus the qa-ctxprobe:3.2 probe image, removed. git status clean before and after."
+    - "sensor_metrics row count in mqtt2bdd-dev-postgres: 112 before this review, 112 after, 0 rows matching qa/3.2%. The one row this review inserted went into the production database only and was removed with the production volume at down -v — the dev database's baseline was never touched."
+    - "docker ps confirms mqtt2bdd-dev-go-dev, mqtt2bdd-dev-mosquitto, mqtt2bdd-dev-postgres all Up throughout, never stopped or restarted."
+    - "Base images intact: alpine:3.23, golang:1.23-alpine, postgres:15-alpine, eclipse-mosquitto:2. No docker builder prune or docker system prune run."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Broker authentication remains deferred with no approved home. Sound today given the documented threat model and the fact the dev stack has carried the identical anonymous posture since Story 1.1, but the deferral's soundness depends on the stack staying inside a trusted LAN — worth a dedicated story (mosquitto_passwd, password_file, allow_anonymous false, and a SEC-001 decision on where the credential lives) before any deployment beyond it."
+      refs: ["prod/mosquitto/mosquitto.conf", "README.md#production-deployment"]
+    - action: "docs/architecture/source-tree.md still omits dev/Dockerfile.dev. Pre-existing since Story 1.1, confirmed real in this review, not in scope for any story yet. Add it whenever that shard is next opened."
+      refs: ["docs/architecture/source-tree.md"]
+    - action: "README.md's Getting Started section still reads the legacy hyphenated docker-compose up --build, contradicting this story's own docker compose convention two sections below. Confirmed real. Story 3.5 owns Getting Started and should reconcile it."
+      refs: ["README.md"]
+    - action: "Carried, still open, unchanged by this story: FIND-020 and the components.md Ping(ctx) entry (Story 3.6); FIND-021 and the EffectiveLevel/isKnownLevel nit (Story 3.4); FIND-016, the message_dropped WARN assertion and healthWG teardown (Story 3.3); FIND-010 as an explicit AC (Story 3.3); FIND-019 (Story 3.6). Confirmed none was pulled into this story's diff (git show 8d10f98 --stat touches no .go file, no logging-standards.md, no components.md)."
+      refs: ["docs/qa/gates/3.1-create-production-multi-stage-dockerfile.yml", "docs/stories/3.2.story.md#carry-forward-findings-from-qa-gates"]
