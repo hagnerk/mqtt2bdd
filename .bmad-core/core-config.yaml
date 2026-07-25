@@ -4,7 +4,9 @@ qa:
 prd:
   prdFile: docs/prd.md
   prdVersion: v4
-  prdSharded: true
+  # The PRD is a single file: docs/prd.md. It has never been sharded and docs/prd/
+  # does not exist, so prdSharded stays false and agents read prdFile above.
+  prdSharded: false
   prdShardedLocation: docs/prd
   epicFilePattern: epic-{n}*.md
 architecture:

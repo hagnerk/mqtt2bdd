@@ -122,7 +122,18 @@ The production Docker image applies three hardening measures:
 
 **1. Non-root user**
 
-The container runs as an unprivileged user, limiting the blast radius of a compromised process. Rather than baking a dedicated user into the Dockerfile (which ties the image to a specific UID), the non-root constraint is enforced at the orchestration level via `docker-compose.prod.yml`:
+The container runs as an unprivileged user, limiting the blast radius of a compromised process. The image sets `USER nobody` in the runtime stage of the Dockerfile, so the container is non-root by default wherever it is deployed:
+
+```dockerfile
+# Dockerfile (runtime stage)
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/mqtt2bdd /app/mqtt2bdd
+USER nobody
+ENTRYPOINT ["/app/mqtt2bdd"]
+```
+
+`nobody` resolves to UID `65534` and GID `65534` on Alpine. `docker-compose.prod.yml` may still pin the same identity explicitly, and the two agree numerically:
 
 ```yaml
 # docker-compose.prod.yml
@@ -131,20 +142,13 @@ services:
     user: "65534:65534"  # nobody:nogroup — standard unprivileged user on Alpine/Linux
 ```
 
-UID `65534` (`nobody`) and GID `65534` (`nogroup`) are conventionally reserved for unprivileged processes on Linux and Alpine. The Dockerfile itself requires no `USER` directive — the image stays generic and the security constraint is applied where it is deployed, not where it is built.
-
-```dockerfile
-# Dockerfile (runtime stage) — no USER directive needed
-FROM alpine:3.21
-COPY --from=builder /app/mqtt2bdd /usr/local/bin/mqtt2bdd
-ENTRYPOINT ["/usr/local/bin/mqtt2bdd"]
-```
+UID `65534` (`nobody`) and GID `65534` (`nogroup`) are conventionally reserved for unprivileged processes on Linux and Alpine. `USER` in the Dockerfile is a default, not a lock: `docker run --user` and Compose's `user:` key both override it, so the image stays portable while remaining safe when the orchestration layer says nothing.
 
 > **Note:** If the binary needs to read a file owned by root (e.g. a mounted secret file), ensure the file permissions allow read by UID 65534, or adjust the `user:` value to match your host environment's unprivileged UID.
 
 **2. Minimal base image**
 
-The runtime stage uses `alpine:3.21` (~5 MB), not `golang:alpine` (~300 MB). The final image contains only the statically-linked binary and Alpine's minimal userland — no shell tools, no package manager, no Go toolchain.
+The runtime stage uses `alpine:3.23` (~5 MB), not `golang:alpine` (~300 MB). The final image contains only the statically-linked binary and Alpine's minimal userland — no shell tools, no package manager, no Go toolchain.
 
 **3. Read-only filesystem (recommended)**
 
@@ -223,7 +227,7 @@ TLS is not enabled by default to avoid operational complexity on the home networ
 
 - [ ] `.env.prod` is not committed to Git
 - [ ] `POSTGRES_PASSWORD` is a strong, unique password (not reused)
-- [ ] Container runs as non-root user (`USER mqtt2bdd` in Dockerfile)
+- [ ] Container runs as non-root user (`USER nobody` in Dockerfile)
 - [ ] `go mod verify` passes with no errors
 - [ ] No secrets appear in application logs (check with `docker logs | grep -i password`)
 - [ ] PostgreSQL user `mqtt2bdd` has only `INSERT` and `SELECT` privileges (principle of least privilege):

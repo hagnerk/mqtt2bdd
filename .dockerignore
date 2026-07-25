@@ -1,0 +1,38 @@
+# Docker build context exclusions.
+# The builder compiles from cmd/ and internal/ only; everything below is either a
+# secret, a host artefact, or documentation that would bloat the context and bust
+# the layer cache on every commit.
+
+# Git metadata — large, and changes on every commit
+.git
+.gitignore
+
+# Environment files, wherever they sit. dev/.env carries a real POSTGRES_PASSWORD
+# today and .env.prod will carry the production one on the deployment host. Neither
+# may reach a build layer or a distributable image (SEC-001). The globs are
+# deliberately broader than the files that exist today.
+.env
+.env.*
+*.env
+
+# Development and test stacks — not needed to compile, and dev/ holds the .env above
+dev/
+test/
+
+# Documentation and process artefacts — not needed to compile
+docs/
+.bmad-core/
+.claude/
+.vscode/
+README.md
+CLAUDE.md
+
+# Host build and debug artefacts — the image builds its own binary from source
+bin/
+__debug_bin*
+*.exe
+*.test
+*.out
+
+# Production orchestration — consumed by Docker Compose, not by the build
+docker-compose.prod.yml

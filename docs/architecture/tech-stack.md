@@ -22,8 +22,8 @@ _Note: This is an on-premises deployment, not cloud-based. The architecture is c
 | **MQTT Broker** | Mosquitto | ~2.0.20 | Message broker (dev/test only) | Lightweight, standards-compliant MQTT 3.1.1/5.0 broker, official Eclipse project, widely used in IoT |
 | **Logging** | log/slog | stdlib (Go 1.23) | Structured logging | Zero dependencies, human-readable text output, leveled logging (DEBUG/INFO/ERROR), context-aware, official Go standard as of 1.21 |
 | **Configuration** | os.Getenv | stdlib | Environment variable handling | Zero dependencies, twelve-factor app compliance, Docker-native, educational simplicity |
-| **Container Base (Builder)** | golang:alpine | ~1.23-alpine3.21 | Multi-stage build (compile stage) | Full Go toolchain, Alpine-based for minimal size |
-| **Container Base (Runtime)** | Alpine Linux | ~3.21 | Multi-stage build (runtime stage) | Minimal footprint (~5MB base), security-focused, musl libc compatible with static Go binaries |
+| **Container Base (Builder)** | golang:alpine | ~1.23-alpine | Multi-stage build (compile stage) | Full Go toolchain, Alpine-based for minimal size |
+| **Container Base (Runtime)** | Alpine Linux | ~3.23 | Multi-stage build (runtime stage) | Minimal footprint (~5MB base), security-focused, musl libc compatible with static Go binaries |
 | **Code Formatting** | go fmt | stdlib | Code formatting | Official Go formatter, enforces consistent style |
 | **Static Analysis** | go vet | stdlib | Basic static analysis | Catches common errors, part of standard toolchain |
 | **Linter** | staticcheck | ~2025.1 | Advanced static analysis | Modern industry-standard linter (replaces deprecated golint), catches subtle bugs, go.dev recommended |
