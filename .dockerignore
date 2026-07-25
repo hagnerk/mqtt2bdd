@@ -7,17 +7,28 @@
 .git
 .gitignore
 
-# Environment files, wherever they sit. dev/.env carries a real POSTGRES_PASSWORD
-# today and .env.prod will carry the production one on the deployment host. Neither
-# may reach a build layer or a distributable image (SEC-001). The globs are
-# deliberately broader than the files that exist today.
+# Environment files. dev/.env carries a real POSTGRES_PASSWORD today and .env.prod
+# carries the production one on the deployment host. Neither may reach a build layer
+# or a distributable image (SEC-001).
+#
+# Both anchored and recursive forms are listed on purpose: unlike .gitignore, a bare
+# pattern in .dockerignore matches ONLY at the context root — it does not match at any
+# depth. QA proved this on Story 3.1 by planting six decoys: the three root-level ones
+# were excluded and internal/.env, cmd/secrets.env and internal/config/.env.prod all
+# entered the build context. The ** forms below close that gap. (FIND-022)
 .env
 .env.*
 *.env
+**/.env
+**/.env.*
+**/*.env
 
-# Development and test stacks — not needed to compile, and dev/ holds the .env above
+# Development, test and production stacks — none is needed to compile. The builder
+# takes go.mod, go.sum, cmd/ and internal/ and nothing else; dev/ additionally holds
+# the .env excluded above, and prod/ is created by this story.
 dev/
 test/
+prod/
 
 # Documentation and process artefacts — not needed to compile
 docs/
@@ -33,6 +44,8 @@ __debug_bin*
 *.exe
 *.test
 *.out
+.idea/
+*.pid
 
 # Production orchestration — consumed by Docker Compose, not by the build
 docker-compose.prod.yml

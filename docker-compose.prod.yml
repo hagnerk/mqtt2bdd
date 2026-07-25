@@ -1,0 +1,156 @@
+# Production stack for mqtt2bdd: the application plus the PostgreSQL and Mosquitto
+# instances it depends on. Deploy with:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Every command against this file needs --env-file: the values below arrive by
+# Compose variable interpolation, which --env-file feeds and a bare `up` does not.
+name: mqtt2bdd-prod
+
+services:
+  # ---- PostgreSQL: persistent store for sensor_metrics ---- (AC1, AC2)
+  postgres:
+    image: postgres:15-alpine
+    container_name: mqtt2bdd-prod-postgres      # (AC5)
+    restart: unless-stopped                     # (AC9)
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mqtt2bdd}
+      POSTGRES_USER: ${POSTGRES_USER:-mqtt2bdd}
+      # :? makes Compose refuse to start rather than silently use an empty password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.prod}
+    volumes:
+      # Runs once, on an empty data directory only. (AC2)
+      - ./prod/init-db:/docker-entrypoint-initdb.d:ro
+      - mqtt2bdd-prod-pgdata:/var/lib/postgresql/data
+    ports:
+      # Host binding is parameterised so this stack can coexist with dev/. The
+      # container-side port never changes: the app always reaches 5432 in-network.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    networks:
+      - mqtt2bdd-prod-network
+    healthcheck:
+      # $$ so the container's shell expands these, not Compose at parse time. (AC8)
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # First boot runs initdb and 01-schema.sql before accepting connections.
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---- Mosquitto: the MQTT broker the application subscribes to ---- (AC1, AC3)
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mqtt2bdd-prod-mosquitto     # (AC5)
+    restart: unless-stopped                     # (AC9)
+    volumes:
+      # Configuration by read-only bind mount, data by named volume. (AC3)
+      - ./prod/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt2bdd-prod-mosquitto-data:/mosquitto/data
+    ports:
+      - "${MQTT_HOST_PORT:-1883}:1883"
+    networks:
+      - mqtt2bdd-prod-network
+    healthcheck:
+      # $SYS topics are retained, so this returns immediately (measured: 0.04 s) and
+      # publishes nothing — a mosquitto_pub probe would write a row to sensor_metrics
+      # on every interval, because the application subscribes to '#'. (AC8)
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 -i healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---- The application ---- (AC1, AC4)
+  mqtt2bdd:
+    build:
+      context: .
+      dockerfile: Dockerfile                    # the production Dockerfile, not dev/Dockerfile.dev
+      args:
+        VERSION: ${VERSION:-dev}                # reaches main.Version via -ldflags
+    image: mqtt2bdd:${VERSION:-dev}             # tag the result so it is inspectable by name
+    container_name: mqtt2bdd-prod-app           # (AC5)
+    restart: unless-stopped                     # (AC9)
+    depends_on:
+      # Startup ordering only. Runtime outages are handled by the application's own
+      # reconnect logic and its buffer — nothing here restarts the app on a blip.
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      # Every value the application reads, from internal/config/config.go.
+      MQTT_BROKER: ${MQTT_BROKER:-mqtt2bdd-prod-mosquitto}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      POSTGRES_HOST: ${POSTGRES_HOST:-mqtt2bdd-prod-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-mqtt2bdd}
+      POSTGRES_USER: ${POSTGRES_USER:-mqtt2bdd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BUFFER_SIZE: ${BUFFER_SIZE:-1000}
+    # The image already sets USER nobody; restating the numeric identity keeps it
+    # visible to the operator and is what security.md#container-security prescribes.
+    user: "65534:65534"
+    # The application writes nothing to disk: logs go to stdout and it keeps no state.
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Must match defaultShutdownTimeout in cmd/mqtt2bdd/main.go (30s). Docker's default
+    # grace is 10s: during a database outage insertWithRetry can legitimately occupy the
+    # full drain, and a 10s grace would SIGKILL the process mid-flush — losing buffered
+    # messages and yielding exit 137 with no shutdown_complete. If that constant moves,
+    # this value moves with it. (AC13, FIND-025)
+    stop_grace_period: 30s
+    networks:
+      - mqtt2bdd-prod-network
+    healthcheck:
+      # The application serves no port, so the only honest liveness signal is its own
+      # socket table: an ESTABLISHED connection to the broker means it can still receive.
+      # Reads /proc/net/tcp via busybox netstat, so it opens no connection of its own.
+      #
+      # TWO THINGS THIS PROBE DOES NOT DO, both deliberate:
+      #   1. It cannot detect a failed re-subscription (FIND-010, Story 3.3) — the TCP
+      #      socket stays established while the app receives nothing.
+      #   2. It does not self-heal. `restart:` reacts to container EXIT, not to
+      #      `unhealthy`; only Swarm acts on health. This reports status for
+      #      `docker compose ps` and for an external watchdog, nothing more. (AC8)
+      test: ['CMD-SHELL', 'netstat -tn | grep -qE "[0-9.]+:$$MQTT_PORT[[:space:]]+ESTABLISHED"']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+networks:
+  # Explicit name: without it Compose creates "mqtt2bdd-prod_mqtt2bdd-prod-network". (AC7)
+  mqtt2bdd-prod-network:
+    name: mqtt2bdd-prod-network
+    driver: bridge
+
+volumes:
+  mqtt2bdd-prod-pgdata:
+    name: mqtt2bdd-prod-pgdata
+  mqtt2bdd-prod-mosquitto-data:
+    name: mqtt2bdd-prod-mosquitto-data

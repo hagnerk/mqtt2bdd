@@ -19,7 +19,7 @@ _Note: This is an on-premises deployment, not cloud-based. The architecture is c
 | **MQTT Client** | Eclipse Paho | ~1.5.0 | MQTT protocol implementation | Official Eclipse Foundation library, production-proven, auto-reconnect support, comprehensive QoS handling, excellent Go integration |
 | **Database Driver** | pgx | ~5.7.0 | PostgreSQL connectivity | Modern high-performance driver, superior to lib/pq, native connection pooling, excellent error context, prepared statement support |
 | **Database** | PostgreSQL | ~15.10 | Persistent data storage | JSONB native support (metrics column), ACID compliance, mature ecosystem, Grafana integration, widely adopted for time-series data |
-| **MQTT Broker** | Mosquitto | ~2.0.20 | Message broker (dev/test only) | Lightweight, standards-compliant MQTT 3.1.1/5.0 broker, official Eclipse project, widely used in IoT |
+| **MQTT Broker** | Mosquitto | ~2.1.2 | Message broker (dev, test and the bundled production broker) | Lightweight, standards-compliant MQTT 3.1.1/5.0 broker, official Eclipse project, widely used in IoT |
 | **Logging** | log/slog | stdlib (Go 1.23) | Structured logging | Zero dependencies, human-readable text output, leveled logging (DEBUG/INFO/ERROR), context-aware, official Go standard as of 1.21 |
 | **Configuration** | os.Getenv | stdlib | Environment variable handling | Zero dependencies, twelve-factor app compliance, Docker-native, educational simplicity |
 | **Container Base (Builder)** | golang:alpine | ~1.23-alpine | Multi-stage build (compile stage) | Full Go toolchain, Alpine-based for minimal size |
@@ -31,7 +31,7 @@ _Note: This is an on-premises deployment, not cloud-based. The architecture is c
 | **Test Coverage** | go test -cover | stdlib | Coverage analysis | Built-in coverage measurement |
 | **Build Tool** | go build | stdlib | Binary compilation | Standard Go build tool with ldflags for version injection |
 | **Dependency Management** | go modules | stdlib (Go 1.23) | Package management | Official Go dependency management (go.mod/go.sum) |
-| **Container Orchestration** | Docker Compose | ~2.24 | Local development & deployment | Multi-container orchestration, simple YAML configuration, sufficient for single-host Proxmox deployment |
+| **Container Orchestration** | Docker Compose | ~5.1.2 | Local development & deployment | Multi-container orchestration, simple YAML configuration, sufficient for single-host Proxmox deployment |
 | **CI/CD Platform** | GitHub Actions | N/A (SaaS) | Continuous integration | Free for public repos, excellent Go ecosystem support, YAML-based workflows, integrated with GitHub |
 | **Container Registry** | Docker Hub | N/A (SaaS) | Container image storage | Free public registry, images primarily built locally on Proxmox server for deployment |
 | **Debugger** | Delve (dlv) | ~1.24 | Remote debugging | Official Go debugger, IDE integration, breakpoints/variable inspection |

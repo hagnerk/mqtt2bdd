@@ -1,5 +1,10 @@
-# Environment files — never commit real credentials
+# Environment files — never commit real credentials.
+# .env.prod is the production file the README tells operators to create; .env.prod.example
+# is the committed template and must stay tracked, which is why the pattern below is
+# `.env.prod` and `*.env` rather than `.env.*` — the latter would swallow the template.
 .env
+.env.prod
+*.env
 
 # Go build artifacts
 bin/

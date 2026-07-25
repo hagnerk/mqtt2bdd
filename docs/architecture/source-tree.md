@@ -49,6 +49,12 @@ mqtt2bdd/
 │   └── mosquitto/
 │       └── mosquitto.conf                  # Mosquitto config
 │
+├── prod/
+│   ├── init-db/
+│   │   └── 01-schema.sql                   # Production database schema init
+│   └── mosquitto/
+│       └── mosquitto.conf                  # Production Mosquitto config
+│
 ├── test/
 │   ├── docker-compose.yml                  # Isolated test environment
 │   ├── init-db/
@@ -67,6 +73,7 @@ mqtt2bdd/
 │
 ├── .gitignore                              # Git ignore patterns
 ├── .dockerignore                           # Docker ignore patterns
+├── .env.prod.example                       # Production env template (no real values)
 ├── Dockerfile                              # Production multi-stage build
 ├── docker-compose.prod.yml                 # Production deployment stack
 ├── go.mod                                  # Go module definition

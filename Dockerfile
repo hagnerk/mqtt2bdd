@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /app/mqtt2bdd ./cmd/mqtt2bdd
 
 # ---- Runtime stage: the binary and a CA bundle, nothing else ----
-FROM alpine:3.23
+FROM alpine:3.23 AS runtime
 
 # ARG does not cross a FROM boundary; without this line the version label below
 # expands to an empty string.

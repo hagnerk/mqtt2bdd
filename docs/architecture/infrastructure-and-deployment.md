@@ -4,7 +4,7 @@ Defining the deployment architecture for MQTT2BDD's on-premises Proxmox deployme
 
 ## Infrastructure as Code
 
-**Tool:** Docker Compose ~2.24
+**Tool:** Docker Compose ~5.1.2
 
 **Location:**
 - Development: `dev/docker-compose.yml`
@@ -345,6 +345,16 @@ echo "✅ All integration tests passed!"
 
 **Critical Assumption:** PostgreSQL and Mosquitto are **already deployed externally** on Proxmox infrastructure (managed separately from this project).
 
+> **Note (Story 3.2):** the `docker-compose.prod.yml` that ships is a **self-contained three-service
+> stack** — `mqtt2bdd-prod-app`, `mqtt2bdd-prod-postgres` and `mqtt2bdd-prod-mosquitto` — as PRD Epic 3,
+> Story 3.2 AC1 and AC5 require, with `prod/init-db/01-schema.sql` and `prod/mosquitto/mosquitto.conf`
+> supplying the database schema and broker configuration. The app-only deployment against externally
+> managed PostgreSQL and Mosquitto described below — including the **External Services Prerequisites** and
+> **Rationale for External Services** subsections — remains supported and is reached by setting
+> `POSTGRES_HOST` and `MQTT_BROKER` in `.env.prod` to the external hostnames and starting the application
+> service alone (`docker compose -f docker-compose.prod.yml --env-file .env.prod up -d mqtt2bdd`). It is
+> a documented alternative, not what the file defines by default.
+
 **Details:**
 - **Containers:** `mqtt2bdd-prod-app` (Application only)
 - **External Services:**
@@ -661,6 +671,11 @@ Since PostgreSQL is managed externally, backups are handled at the PostgreSQL se
 - Retention policy (30 days daily, 3 months weekly, 1 year monthly)
 - Backup verification
 - Restore procedures
+
+> **Note (Story 3.2):** this applies to the app-only deployment against an externally managed PostgreSQL.
+> In the self-contained three-service stack that ships, the database lives in the `mqtt2bdd-prod-pgdata`
+> named volume on the deployment host, and backing that volume up — or dumping from
+> `mqtt2bdd-prod-postgres` — is in scope for whoever operates the stack.
 
 **Application State:**
 - No persistent application state (stateless)
