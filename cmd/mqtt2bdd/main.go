@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -67,27 +66,40 @@ func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <
 }
 
 func main() {
+	// Created before the configuration is read so the config-failure path is
+	// structured too; an empty level means INFO, silently.
+	bootstrapLogger := logger.WithComponent(logger.InitLogger(""), logger.ComponentMain)
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("configuration error: %v", err)
+		bootstrapLogger.Error("configuration error", "event", "config_load_failed", "operation", "load_config", "error", err)
+		os.Exit(1)
 	}
 
-	l := logger.InitLogger(cfg.LogLevel)
-	l.Info("MQTT2BDD starting", "version", Version)
+	// baseLogger stays untagged: each client attaches its own component, so handing it
+	// an already-tagged logger would emit "component" twice on every line it writes.
+	baseLogger := logger.InitLogger(cfg.LogLevel)
+	l := logger.WithComponent(baseLogger, logger.ComponentMain)
+	l.Info("MQTT2BDD starting", "event", "starting", "version", Version)
+	l.Info("configuration loaded", "event", "config_loaded", "log_level", cfg.LogLevel, "buffer_size", cfg.BufferSize)
 
-	mqttClient := mqtt.NewClient(cfg, l)
+	mqttClient := mqtt.NewClient(cfg, baseLogger)
 	mqttCtx, mqttCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
 	err = mqttClient.Connect(mqttCtx)
 	mqttCancel()
 	if err != nil {
+		// failed_component, not component: this entry is emitted by main, and component
+		// must keep identifying the emitter rather than the culprit.
+		l.Error("startup aborted", "event", "startup_aborted", "operation", "connect", "failed_component", logger.ComponentMQTT, "error", err)
 		os.Exit(1)
 	}
 
-	dbClient := database.NewClient(cfg, l)
+	dbClient := database.NewClient(cfg, baseLogger)
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
 	err = dbClient.Connect(dbCtx)
 	dbCancel()
 	if err != nil {
+		l.Error("startup aborted", "event", "startup_aborted", "operation", "connect", "failed_component", logger.ComponentDatabase, "error", err)
 		os.Exit(1)
 	}
 
@@ -95,6 +107,7 @@ func main() {
 	// Producer: MQTT message handler (Paho callback goroutine).
 	// Consumer: DB writer goroutine below.
 	msgChan := make(chan mqtt.Message, cfg.BufferSize)
+	l.Info("message buffer initialised", "event", "buffer_initialised", "buffer_capacity", cfg.BufferSize)
 
 	// done is closed once at shutdown to signal both the DB writer (drain and exit) and any
 	// producer blocked on a full buffer (stop waiting). msgChan itself is never closed.
@@ -108,32 +121,36 @@ func main() {
 		defer wg.Done()
 		dbWriterLoop(msgChan, dbClient, done)
 	}()
+	l.Info("database writer started", "event", "writer_started")
 
 	mqttMessageHandler := func(topic string, payload []byte) {
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}
 		select {
 		case msgChan <- msg:
 		default:
-			l.Warn("message buffer full, blocking until space available", "buffer_size", cfg.BufferSize)
+			l.Warn("message buffer full, blocking until space available", "event", "buffer_full", "buffer_size", cfg.BufferSize)
 			// Block until the DB writer frees a slot, or shutdown begins (drop the message
 			// rather than block on a channel that is draining for the last time).
 			select {
 			case msgChan <- msg:
 			case <-done:
+				l.Warn("message dropped at shutdown, buffer was full", "event", "message_dropped", "topic", topic)
 			}
 		}
 	}
 	if err := mqttClient.Subscribe("#", mqttMessageHandler); err != nil {
-		l.Error("MQTT subscribe failed", "error", err)
+		l.Error("MQTT subscribe failed", "event", "startup_aborted", "operation", "subscribe", "failed_component", logger.ComponentMQTT, "error", err)
 		os.Exit(1)
 	}
+
+	l.Info("startup complete", "event", "startup_complete", "version", Version)
 
 	// Block until a shutdown signal arrives. Buffered (cap 1) so the signal is not
 	// missed if it fires before this goroutine reaches the receive.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	sig := <-sigChan
-	l.Info("Shutdown signal received, flushing buffered messages", "signal", sig.String())
+	l.Info("Shutdown signal received, flushing buffered messages", "event", "shutdown_signal", "signal", sig.String())
 
 	// Ordered teardown (order is required for correctness, not stylistic):
 	mqttClient.Disconnect()  // Stop receiving new messages before signalling the writer.
@@ -148,11 +165,11 @@ func main() {
 	}()
 	select {
 	case <-drained:
-		l.Info("Flushed buffered messages", "count", buffered)
+		l.Info("Flushed buffered messages", "event", "flush_complete", "count", buffered)
 	case <-time.After(defaultShutdownTimeout):
-		l.Warn("Shutdown timeout exceeded; some buffered messages may not have been flushed", "buffered", buffered)
+		l.Warn("Shutdown timeout exceeded; some buffered messages may not have been flushed", "event", "flush_timeout", "buffered", buffered)
 	}
 
-	dbClient.Close()            // Close the pool only after the drain resolves.
-	l.Info("Shutdown complete") // Natural return ⇒ exit code 0.
+	dbClient.Close()                                          // Close the pool only after the drain resolves.
+	l.Info("Shutdown complete", "event", "shutdown_complete") // Natural return ⇒ exit code 0.
 }

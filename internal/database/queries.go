@@ -17,18 +17,25 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 	sensorRunes := []rune(sensor)
 	if len(sensorRunes) > maxSensorLen {
 		c.logger.Warn("sensor name truncated",
+			"event", "topic_truncated",
 			"original_length", len(sensorRunes),
-			"truncated_sensor", string(sensorRunes[len(sensorRunes)-maxSensorLen:]),
+			"truncated_topic", string(sensorRunes[len(sensorRunes)-maxSensorLen:]),
 		)
 		sensor = string(sensorRunes[len(sensorRunes)-maxSensorLen:])
 	}
 
 	const query = `INSERT INTO sensor_metrics (sensor, date, metrics) VALUES ($1, $2, $3) ON CONFLICT (sensor, date) DO NOTHING`
 
+	start := time.Now()
 	commandTag, err := c.pool.Exec(ctx, query, sensor, timestamp, metrics)
+	elapsed := time.Since(start)
 	if err != nil {
 		c.logger.Error("failed to insert message",
-			"sensor", sensor,
+			"event", "write_failure",
+			"operation", "insert",
+			"topic", sensor,
+			"payload_size", len(metrics),
+			"duration_ms", elapsed.Milliseconds(),
 			"error", err,
 		)
 		return fmt.Errorf("failed to insert message for sensor %s: %w", sensor, err)
@@ -36,14 +43,20 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 
 	if commandTag.RowsAffected() == 0 {
 		c.logger.Warn("duplicate message ignored",
-			"sensor", sensor,
+			"event", "write_duplicate",
+			"topic", sensor,
 			"timestamp", timestamp.Format(time.RFC3339),
+			"payload_size", len(metrics),
+			"duration_ms", elapsed.Milliseconds(),
 		)
 	} else {
 		c.logger.Debug("message persisted",
-			"sensor", sensor,
+			"event", "write_success",
+			"topic", sensor,
 			"timestamp", timestamp.Format(time.RFC3339),
 			"payload_size", len(metrics),
+			"duration_ms", elapsed.Milliseconds(),
+			"query", query,
 		)
 	}
 

@@ -2,11 +2,24 @@ package logger_test
 
 import (
 	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spydemon/mqtt2bdd/internal/logger"
 )
+
+// fieldValue extracts the value of a key=value field from a slog TextHandler line.
+// It returns an empty string when the key is absent.
+func fieldValue(line, key string) string {
+	for _, field := range strings.Fields(line) {
+		if rest, found := strings.CutPrefix(field, key+"="); found {
+			return rest
+		}
+	}
+	return ""
+}
 
 func TestNewLogger(t *testing.T) {
 	tests := []struct {
@@ -59,5 +72,74 @@ func TestInitLogger(t *testing.T) {
 	l := logger.InitLogger("INFO")
 	if l == nil {
 		t.Fatal("InitLogger() returned nil")
+	}
+}
+
+// emit writes a single record at the named level, so the tests below can cover
+// every level from a table without four near-identical bodies.
+func emit(l *slog.Logger, level string) {
+	switch level {
+	case "DEBUG":
+		l.Debug("probe")
+	case "INFO":
+		l.Info("probe")
+	case "WARN":
+		l.Warn("probe")
+	case "ERROR":
+		l.Error("probe")
+	}
+}
+
+func TestNewLogger_TimestampIsUTC(t *testing.T) {
+	tests := []struct {
+		name  string
+		level string
+	}{
+		{"debug record", "DEBUG"},
+		{"info record", "INFO"},
+		{"warn record", "WARN"},
+		{"error record", "ERROR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			emit(logger.NewLogger("DEBUG", &buf), tt.level)
+
+			got := fieldValue(strings.TrimSpace(buf.String()), "time")
+			if got == "" {
+				t.Fatalf("no time field in output %q", buf.String())
+			}
+			if !strings.HasSuffix(got, "Z") {
+				t.Errorf("time=%q does not end with Z, so it is not UTC", got)
+			}
+			if _, err := time.Parse(time.RFC3339, got); err != nil {
+				t.Errorf("time=%q is not RFC 3339: %v", got, err)
+			}
+		})
+	}
+}
+
+func TestWithComponent(t *testing.T) {
+	tests := []struct {
+		name      string
+		level     string
+		component string
+	}{
+		{"debug record", "DEBUG", logger.ComponentMain},
+		{"info record", "INFO", logger.ComponentMQTT},
+		{"warn record", "WARN", logger.ComponentDatabase},
+		{"error record", "ERROR", logger.ComponentDatabase},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			emit(logger.WithComponent(logger.NewLogger("DEBUG", &buf), tt.component), tt.level)
+
+			if got := fieldValue(strings.TrimSpace(buf.String()), "component"); got != tt.component {
+				t.Errorf("component=%q, want %q (output=%q)", got, tt.component, buf.String())
+			}
+		})
 	}
 }

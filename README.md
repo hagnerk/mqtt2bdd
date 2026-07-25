@@ -40,3 +40,26 @@ docker-compose up --build
 This starts three containers: `mqtt2bdd-dev-postgres`, `mqtt2bdd-dev-mosquitto`, and `mqtt2bdd-dev-go-dev` (with Delve remote debugger on port 2345).
 
 See Story 1.1 for full setup details and VS Code debugging configuration.
+
+## Build
+
+The application reports its version on startup (`version=…` on the `starting` and
+`startup_complete` log lines). The value comes from the `main.Version` variable, which
+defaults to `dev` and is overridden at build time via ldflags.
+
+Build with the default version:
+
+```bash
+docker compose exec go-dev go build -o mqtt2bdd ./cmd/mqtt2bdd
+# logs: version=dev
+```
+
+Build with an injected version:
+
+```bash
+docker compose exec go-dev go build -ldflags="-X main.Version=0.1.0" -o mqtt2bdd ./cmd/mqtt2bdd
+# logs: version=0.1.0
+```
+
+Both commands run from `dev/`. Substitute any version string — a Git tag or a commit SHA,
+for example — for `0.1.0`.

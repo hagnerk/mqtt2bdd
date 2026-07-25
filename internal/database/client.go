@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
+	"github.com/spydemon/mqtt2bdd/internal/logger"
 )
 
 const (
@@ -37,11 +38,12 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 		cfg.PostgresUser,
 		cfg.PostgresPassword,
 	)
+	// The component, host and database context is bound once here, so no call site repeats it.
 	return &Client{
 		dsn:    dsn,
 		host:   cfg.PostgresHost,
 		dbName: cfg.PostgresDB,
-		logger: l,
+		logger: l.With("component", logger.ComponentDatabase, "host", cfg.PostgresHost, "database", cfg.PostgresDB),
 	}
 }
 
@@ -50,11 +52,11 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 // outcome. Returns an error if the pool cannot be created or the initial ping
 // fails, having already logged the failure with host and database context.
 func (c *Client) Connect(ctx context.Context) error {
-	c.logger.Info("connecting to PostgreSQL", "host", c.host, "database", c.dbName)
+	c.logger.Info("connecting to PostgreSQL", "event", "connecting")
 
 	poolConfig, err := pgxpool.ParseConfig(c.dsn)
 	if err != nil {
-		c.logger.Error("Failed to parse PostgreSQL DSN", "host", c.host, "database", c.dbName, "error", err)
+		c.logger.Error("Failed to parse PostgreSQL DSN", "event", "connect_failed", "operation", "parse_dsn", "error", err)
 		return fmt.Errorf("failed to parse PostgreSQL DSN for %s/%s: %w", c.host, c.dbName, err)
 	}
 
@@ -64,25 +66,43 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
-		c.logger.Error("PostgreSQL connection failed", "host", c.host, "database", c.dbName, "error", err)
+		c.logger.Error("PostgreSQL connection failed", "event", "connect_failed", "operation", "connect", "error", err)
 		return fmt.Errorf("PostgreSQL connection failed for %s/%s: %w", c.host, c.dbName, err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		c.logger.Error("PostgreSQL ping failed", "host", c.host, "database", c.dbName, "error", err)
+		c.logger.Error("PostgreSQL ping failed", "event", "connect_failed", "operation", "ping", "error", err)
 		return fmt.Errorf("PostgreSQL ping failed at %s/%s: %w", c.host, c.dbName, err)
 	}
 
 	c.pool = pool
-	c.logger.Info("PostgreSQL connected", "host", c.host, "database", c.dbName)
+	c.logger.Info("PostgreSQL connected", "event", "connected")
+	c.LogPoolStats()
 	return nil
 }
 
 // Close shuts down the connection pool and logs disconnection.
 func (c *Client) Close() {
+	c.LogPoolStats()
 	if c.pool != nil {
 		c.pool.Close()
 	}
-	c.logger.Info("PostgreSQL disconnected")
+	c.logger.Info("PostgreSQL disconnected", "event", "disconnected")
+}
+
+// LogPoolStats logs the current connection pool statistics at DEBUG level.
+// It is a no-op when the pool has not been opened.
+func (c *Client) LogPoolStats() {
+	if c.pool == nil {
+		return
+	}
+	stat := c.pool.Stat()
+	c.logger.Debug("PostgreSQL pool stats",
+		"event", "pool_stats",
+		"acquired_conns", stat.AcquiredConns(),
+		"idle_conns", stat.IdleConns(),
+		"total_conns", stat.TotalConns(),
+		"max_conns", stat.MaxConns(),
+	)
 }

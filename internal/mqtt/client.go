@@ -12,6 +12,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
 	"github.com/spydemon/mqtt2bdd/internal/config"
+	"github.com/spydemon/mqtt2bdd/internal/logger"
 )
 
 const (
@@ -37,9 +38,10 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 	brokerURL := fmt.Sprintf("tcp://%s:%d", cfg.MQTTBroker, cfg.MQTTPort)
 
 	// c is initialised before opts so the connection-lost closure can capture it.
+	// The component and broker context is bound once here, so no call site repeats it.
 	c := &Client{
 		brokerURL: brokerURL,
-		logger:    l,
+		logger:    l.With("component", logger.ComponentMQTT, "broker", brokerURL),
 		shutdown:  make(chan struct{}),
 	}
 
@@ -56,7 +58,9 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 	opts.SetAutoReconnect(false)
 
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-		c.logger.Error("MQTT connection lost", "error", err)
+		// No operation attribute: the broker dropped the link on its own, so this
+		// reports a state rather than a failed local attempt.
+		c.logger.Error("MQTT connection lost", "event", "connection_lost", "error", err)
 		go c.reconnectLoop()
 	})
 
@@ -67,20 +71,23 @@ func NewClient(cfg *config.Config, l *slog.Logger) *Client {
 // Connect establishes a TCP connection to the MQTT broker. It logs the attempt
 // and the outcome. Returns an error if the connection cannot be established.
 func (c *Client) Connect(ctx context.Context) error {
-	c.logger.Info("connecting to MQTT broker", "broker", c.brokerURL)
+	c.logger.Info("connecting to MQTT broker", "event", "connecting")
 
 	token := c.pahoClient.Connect()
 	select {
 	case <-token.Done():
 	case <-ctx.Done():
+		// ctx.Err() rather than a fixed string, so a future non-deadline cancellation
+		// stays distinguishable from the connect timeout that is its only trigger today.
+		c.logger.Error("MQTT connect timed out", "event", "connect_timeout", "operation", "connect", "error", ctx.Err())
 		return fmt.Errorf("MQTT connect cancelled for broker %s: %w", c.brokerURL, ctx.Err())
 	}
 	if err := token.Error(); err != nil {
-		c.logger.Error("MQTT connection failed", "broker", c.brokerURL, "error", err)
+		c.logger.Error("MQTT connection failed", "event", "connect_failed", "operation", "connect", "error", err)
 		return fmt.Errorf("failed to connect to MQTT broker %s: %w", c.brokerURL, err)
 	}
 
-	c.logger.Info("MQTT connected", "broker", c.brokerURL)
+	c.logger.Info("MQTT connected", "event", "connected")
 	return nil
 }
 
@@ -91,7 +98,7 @@ func (c *Client) Disconnect() {
 	// Signal any running reconnectLoop to stop before tearing down the connection.
 	c.closeOnce.Do(func() { close(c.shutdown) })
 	c.pahoClient.Disconnect(quiesceMs)
-	c.logger.Info("MQTT disconnected")
+	c.logger.Info("MQTT disconnected", "event", "disconnected")
 }
 
 // IsConnected reports whether the client currently has an active connection
@@ -109,16 +116,29 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 	c.subscribedTopic = topic
 	c.subscribedHandler = handler
 
-	c.logger.Info("subscribing to MQTT topic", "topic", topic)
+	c.logger.Info("subscribing to MQTT topic", "event", "subscribing", "topic", topic)
 	token := c.pahoClient.Subscribe(topic, qos0, func(_ mqtt.Client, msg mqtt.Message) {
+		// Level-guarded because this is the per-message hot path: slog evaluates its
+		// variadic arguments before checking the level, so the payload conversion
+		// would copy every message in full even when running at INFO.
+		if c.logger.Enabled(context.Background(), slog.LevelDebug) {
+			// string(...) not the raw []byte: TextHandler renders a byte slice as
+			// decimal values ("[123 34 ...]"), which is unreadable.
+			c.logger.Debug("MQTT message received",
+				"event", "message_received",
+				"topic", msg.Topic(),
+				"payload_size", len(msg.Payload()),
+				"payload", string(msg.Payload()),
+			)
+		}
 		handler(msg.Topic(), msg.Payload())
 	})
 	<-token.Done()
 	if err := token.Error(); err != nil {
-		c.logger.Error("MQTT subscription failed", "topic", topic, "error", err)
+		c.logger.Error("MQTT subscription failed", "event", "subscribe_failed", "operation", "subscribe", "topic", topic, "error", err)
 		return fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
 	}
-	c.logger.Info("MQTT subscribed", "topic", topic)
+	c.logger.Info("MQTT subscribed", "event", "subscribed", "topic", topic)
 	return nil
 }
 
@@ -130,22 +150,22 @@ func (c *Client) reconnectLoop() {
 		select {
 		case <-time.After(defaultMQTTReconnectInterval):
 		case <-c.shutdown:
-			c.logger.Info("MQTT reconnect cancelled, shutting down")
+			c.logger.Info("MQTT reconnect cancelled, shutting down", "event", "reconnect_cancelled")
 			return
 		}
-		c.logger.Info("Attempting MQTT reconnection", "attempt", attempt)
+		c.logger.Info("Attempting MQTT reconnection", "event", "reconnecting", "attempt", attempt)
 
 		token := c.pahoClient.Connect()
 		<-token.Done()
 		if err := token.Error(); err != nil {
-			c.logger.Error("MQTT reconnection failed", "attempt", attempt, "error", err)
+			c.logger.Error("MQTT reconnection failed", "event", "reconnect_failed", "operation", "reconnect", "attempt", attempt, "error", err)
 			continue
 		}
 
-		c.logger.Info("MQTT reconnected successfully")
+		c.logger.Info("MQTT reconnected successfully", "event", "reconnected")
 		if c.subscribedHandler != nil {
 			if err := c.Subscribe(c.subscribedTopic, c.subscribedHandler); err != nil {
-				c.logger.Error("MQTT re-subscription failed after reconnect", "error", err)
+				c.logger.Error("MQTT re-subscription failed after reconnect", "event", "resubscribe_failed", "operation", "subscribe", "error", err)
 			}
 		}
 		return
