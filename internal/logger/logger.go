@@ -20,27 +20,32 @@ const (
 	ComponentDatabase = "database"
 )
 
+// EffectiveLevel resolves a configured level name to the slog.Level actually in
+// force. Level is case-insensitive: "DEBUG", "INFO", "ERROR". Empty and
+// unrecognized values resolve to slog.LevelInfo, so the returned level is what
+// the handler filters on regardless of what was requested.
+func EffectiveLevel(level string) slog.Level {
+	switch strings.ToUpper(level) {
+	case "DEBUG":
+		return slog.LevelDebug
+	case "INFO":
+		return slog.LevelInfo
+	case "ERROR":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 // NewLogger creates a slog.Logger writing to w at the specified level.
 // Level is case-insensitive: "DEBUG", "INFO", "ERROR". Non-empty unrecognized
 // values default to INFO and log a warning. Empty string silently defaults to INFO.
 // Timestamps are emitted in UTC (RFC 3339 with a "Z" suffix).
 func NewLogger(level string, w io.Writer) *slog.Logger {
-	var logLevel slog.Level
-	var unknown bool
-
-	switch strings.ToUpper(level) {
-	case "DEBUG":
-		logLevel = slog.LevelDebug
-	case "INFO":
-		logLevel = slog.LevelInfo
-	case "ERROR":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-		if level != "" {
-			unknown = true
-		}
-	}
+	logLevel := EffectiveLevel(level)
+	// An unrecognized value resolves to INFO like an empty one, but only the
+	// former is worth warning about: it means the operator asked for something.
+	unknown := level != "" && !isKnownLevel(level)
 
 	opts := &slog.HandlerOptions{
 		Level: logLevel,
@@ -75,4 +80,16 @@ func InitLogger(level string) *slog.Logger {
 // name. It is the single way a component tag is attached across the codebase.
 func WithComponent(l *slog.Logger, component string) *slog.Logger {
 	return l.With("component", component)
+}
+
+// isKnownLevel reports whether level names one of the accepted levels. It is the
+// only thing EffectiveLevel's default arm cannot express: that arm conflates
+// "unset" with "misspelled", and only the latter deserves a warning.
+func isKnownLevel(level string) bool {
+	switch strings.ToUpper(level) {
+	case "DEBUG", "INFO", "ERROR":
+		return true
+	default:
+		return false
+	}
 }

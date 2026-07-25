@@ -68,6 +68,29 @@ func TestNewLogger(t *testing.T) {
 	}
 }
 
+func TestEffectiveLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		level string
+		want  slog.Level
+	}{
+		{"debug", "DEBUG", slog.LevelDebug},
+		{"case insensitive debug", "debug", slog.LevelDebug},
+		{"info", "INFO", slog.LevelInfo},
+		{"error", "ERROR", slog.LevelError},
+		{"empty resolves to INFO", "", slog.LevelInfo},
+		{"unrecognized resolves to INFO", "VERBOSE", slog.LevelInfo},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := logger.EffectiveLevel(tt.level); got != tt.want {
+				t.Errorf("EffectiveLevel(%q) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInitLogger(t *testing.T) {
 	l := logger.InitLogger("INFO")
 	if l == nil {

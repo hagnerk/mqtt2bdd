@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"sync"
@@ -25,6 +27,16 @@ const defaultShutdownTimeout = 30 * time.Second
 // defaultConnectTimeout bounds startup connection attempts so a hung broker or
 // database cannot block startup indefinitely.
 const defaultConnectTimeout = 10 * time.Second
+
+// defaultHealthCheckInterval is the cadence of the health status log. One minute is
+// frequent enough to notice an outage promptly, and rare enough that a year of uptime
+// is a manageable number of entries.
+const defaultHealthCheckInterval = 60 * time.Second
+
+// bufferHighWaterMarkPercent is the buffer utilization above which backpressure is
+// reported: past this point the database is not keeping up with the broker, and the
+// remaining headroom is the operator's window to react before messages block.
+const bufferHighWaterMarkPercent = 80.0
 
 // Version is injected at build time via ldflags. Defaults to "dev" for local builds.
 var Version = "dev"
@@ -65,6 +77,85 @@ func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <
 	}
 }
 
+// connectionStatus renders a connection state as the vocabulary the health entry uses.
+// The two literals exist here and nowhere else, so MQTT and database read identically.
+func connectionStatus(connected bool) string {
+	if connected {
+		return "connected"
+	}
+	return "disconnected"
+}
+
+// bufferUtilizationPercent returns used/capacity as a percentage rounded to one decimal.
+// The zero guard is load-bearing: BUFFER_SIZE=0 is accepted and yields an unbuffered
+// channel, where the division would be 0/0 and produce NaN. Rounding keeps the field a
+// number a log processor can aggregate rather than 33.333333333333336.
+func bufferUtilizationPercent(used, capacity int) float64 {
+	if capacity == 0 {
+		return 0
+	}
+	p := float64(used) / float64(capacity) * 100
+	return math.Round(p*10) / 10
+}
+
+// healthCheckLoop logs one health status entry per tick until done is closed, plus a
+// separate WARN whenever the buffer sits above its high-water mark. It only reads
+// msgChan's length and capacity: it never sends, receives or closes.
+func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database.Client, msgChan <-chan mqtt.Message, done <-chan struct{}) {
+	// A ticker rather than a sleep loop, so the interval does not drift by the cost
+	// of each iteration.
+	ticker := time.NewTicker(defaultHealthCheckInterval)
+	defer ticker.Stop()
+
+	var lastWriteCount uint64
+
+	for {
+		select {
+		case <-ticker.C:
+			used := len(msgChan)
+			capacity := cap(msgChan)
+			utilization := bufferUtilizationPercent(used, capacity)
+
+			// WriteCount is monotonic, so this unsigned subtraction cannot wrap.
+			total := dbClient.WriteCount()
+			processed := total - lastWriteCount
+			lastWriteCount = total
+
+			// -1 rather than an omitted field: an absent value would be
+			// indistinguishable from a parsing gap, where the sentinel is greppable.
+			lastWriteAgeSeconds := int64(-1)
+			if lastWriteAt := dbClient.LastWriteAt(); !lastWriteAt.IsZero() {
+				lastWriteAgeSeconds = int64(time.Since(lastWriteAt).Seconds())
+			}
+
+			l.Info("health check",
+				"event", "health_check",
+				"mqtt_status", connectionStatus(mqttClient.IsConnected()),
+				"db_status", connectionStatus(dbClient.IsConnected()),
+				"db_last_write_age_s", lastWriteAgeSeconds,
+				"buffer_used", used,
+				"buffer_capacity", capacity,
+				"buffer_utilization_percent", utilization,
+				"processed_last_interval", processed,
+			)
+
+			// A separate entry, not a field on the line above: severity is a property
+			// of an entry, and an operator filtering on level=WARN must see this one.
+			// Strictly greater than the mark — a buffer at exactly 80% is not yet degraded.
+			if utilization > bufferHighWaterMarkPercent {
+				l.Warn("message buffer above high-water mark, possible backpressure",
+					"event", "buffer_high",
+					"buffer_used", used,
+					"buffer_capacity", capacity,
+					"buffer_utilization_percent", utilization,
+				)
+			}
+		case <-done:
+			return
+		}
+	}
+}
+
 func main() {
 	// Created before the configuration is read so the config-failure path is
 	// structured too; an empty level means INFO, silently.
@@ -81,7 +172,9 @@ func main() {
 	baseLogger := logger.InitLogger(cfg.LogLevel)
 	l := logger.WithComponent(baseLogger, logger.ComponentMain)
 	l.Info("MQTT2BDD starting", "event", "starting", "version", Version)
-	l.Info("configuration loaded", "event", "config_loaded", "log_level", cfg.LogLevel, "buffer_size", cfg.BufferSize)
+	// Both levels are reported: log_level is what the operator asked for, effective_log_level
+	// is what the handler actually filters on, so a typo is diagnosable from this one entry.
+	l.Info("configuration loaded", "event", "config_loaded", "log_level", cfg.LogLevel, "effective_log_level", logger.EffectiveLevel(cfg.LogLevel).String(), "buffer_size", cfg.BufferSize)
 
 	mqttClient := mqtt.NewClient(cfg, baseLogger)
 	mqttCtx, mqttCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
@@ -122,6 +215,18 @@ func main() {
 		dbWriterLoop(msgChan, dbClient, done)
 	}()
 	l.Info("database writer started", "event", "writer_started")
+
+	// Health monitor goroutine. It gets its own WaitGroup rather than joining wg,
+	// because wg is what the drained channel signals: adding the health loop would
+	// turn "the DB writer finished flushing" into "…and the health loop stopped too",
+	// which is exactly the conflation flush_complete / flush_timeout exists to avoid.
+	var healthWG sync.WaitGroup
+	healthWG.Add(1)
+	go func() {
+		defer healthWG.Done()
+		healthCheckLoop(l, mqttClient, dbClient, msgChan, done)
+	}()
+	l.Info("health monitor started", "event", "health_monitor_started", "interval_s", int(defaultHealthCheckInterval.Seconds()))
 
 	mqttMessageHandler := func(topic string, payload []byte) {
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}
@@ -169,6 +274,11 @@ func main() {
 	case <-time.After(defaultShutdownTimeout):
 		l.Warn("Shutdown timeout exceeded; some buffered messages may not have been flushed", "event", "flush_timeout", "buffered", buffered)
 	}
+
+	// The health loop is parked in a select and returns within microseconds of close(done),
+	// so this never delays shutdown; waiting here keeps teardown deterministic, with no
+	// goroutine still reading the client when its pool is torn down.
+	healthWG.Wait()
 
 	dbClient.Close()                                          // Close the pool only after the drain resolves.
 	l.Info("Shutdown complete", "event", "shutdown_complete") // Natural return ⇒ exit code 0.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,12 +21,20 @@ const (
 )
 
 // Client wraps a pgx connection pool, retaining connection metadata for logging.
+//
+// The health fields below are written by the writer goroutine (through InsertMessage)
+// and read by the health-check goroutine, so they are atomics rather than plain fields.
+// A Client is always handled as *Client, so they are never copied.
 type Client struct {
 	pool   *pgxpool.Pool
 	dsn    string // connection string including credentials; never logged
 	host   string
 	dbName string
 	logger *slog.Logger
+
+	connected   atomic.Bool   // outcome of the most recent database interaction
+	lastWriteAt atomic.Int64  // Unix nanoseconds of the last successful write; 0 means never
+	writeCount  atomic.Uint64 // monotonic count of successful writes since startup
 }
 
 // NewClient constructs a Client with the connection string derived from cfg.
@@ -77,6 +86,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.pool = pool
+	// The startup ping is what seeds the health status: it proves reachability before
+	// any message has been written, so IsConnected() is meaningful from the first tick.
+	c.connected.Store(true)
 	c.logger.Info("PostgreSQL connected", "event", "connected")
 	c.LogPoolStats()
 	return nil
@@ -88,7 +100,34 @@ func (c *Client) Close() {
 	if c.pool != nil {
 		c.pool.Close()
 	}
+	// A torn-down pool is not connected, whatever the last write returned. This keeps
+	// IsConnected()'s contract true unconditionally rather than only for as long as the
+	// shutdown ordering happens to keep readers away.
+	c.connected.Store(false)
 	c.logger.Info("PostgreSQL disconnected", "event", "disconnected")
+}
+
+// IsConnected reports whether the most recent database interaction succeeded: the
+// startup ping, or the last write attempted since. It performs no network call and
+// costs a single atomic load, so it is safe to call at any cadence.
+func (c *Client) IsConnected() bool {
+	return c.connected.Load()
+}
+
+// LastWriteAt returns the time of the last successful write, or the zero time.Time
+// when no write has succeeded since startup.
+func (c *Client) LastWriteAt() time.Time {
+	ns := c.lastWriteAt.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
+// WriteCount returns the total number of successful writes since startup. It is
+// monotonic and never reset; a per-interval rate is a delta the caller computes.
+func (c *Client) WriteCount() uint64 {
+	return c.writeCount.Load()
 }
 
 // LogPoolStats logs the current connection pool statistics at DEBUG level.

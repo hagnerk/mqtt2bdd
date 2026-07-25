@@ -20,9 +20,13 @@ MQTT2BDD bridges this gap as a standalone Go application that subscribes to all 
 
 ### Change Log
 
-| Date | Version | Description | Author |
-|------|---------|-------------|--------|
-| 2026-01-23 | 0.1.0 | Initial PRD creation from Project Brief | PM Agent (John) |
+| Date       | Version | Description                                                  | Author          |
+|------------|---------|--------------------------------------------------------------|-----------------|
+| 2026-01-23 | 0.1.0   | Initial PRD creation from Project Brief                      | PM Agent (John) |
+| 2026-07-25 | 0.2.0   | Epic 2 alignment - Story 2.5 AC9/AC10, Story 2.6 AC2/AC4/AC7 | PO (Sarah)      |
+
+Amendments are recorded inline, in a blockquote beneath the acceptance criteria of the story
+they affect, so a reader arriving at an AC always finds the reason it reads as it does.
 
 ---
 
@@ -417,9 +421,16 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 6. Startup sequence logged showing initialization of each component
 7. Log output includes application version injected via build-time ldflags (e.g., `-ldflags="-X main.Version=0.1.0"`), defaulting to "dev" for local development
 8. All timestamps in ISO 8601 format with timezone (UTC)
-9. Debug mode logs additional details: raw MQTT payloads (truncated), SQL queries, connection pool stats
-10. Manual test: Review logs in Docker logs output, verify JSON structure and field consistency
+9. Debug mode logs additional details: raw MQTT payloads in full (no truncation), SQL queries, connection pool stats
+10. Manual test: Review logs in Docker logs output, verify structured-field consistency across components
 11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+> **Amended 2026-07-25 (PO), after implementation.** AC9 and AC10 originally read "raw MQTT payloads (truncated)" and "verify JSON structure". Both were deliberately diverged from during implementation and the divergences were accepted at review; the wording above is what shipped.
+>
+> - **AC9** — payloads are logged whole. A cap removes the end of the payload, which is as often as not where the evidence sits when a message fails to parse. DEBUG is opt-in, so verbosity stays bounded by the operator's own `LOG_LEVEL`.
+> - **AC10** — the logger keeps `slog.NewTextHandler`. Text output is mandated by three architecture documents and has shipped since Story 1.4; the AC's intent (an operator can read and correlate fields) is met by `key=value`. Genuine JSON output would be an architecture change and warrants its own story.
+>
+> [Source: docs/stories/2.5.story.md → Dev Notes → Deviations; docs/qa/gates/2.5-enhance-structured-logging-for-operations.yml]
 
 ### Story 2.6: Add Application Health Monitoring Logs
 
@@ -430,15 +441,22 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 **Acceptance Criteria:**
 
 1. Implement periodic health check goroutine running every 60 seconds
-2. Health check logs at INFO level: "Health check: MQTT=<connected|disconnected>, DB=<connected|disconnected>, Buffer=<n>/<capacity> messages"
+2. Health check logs at INFO level as structured fields rather than an interpolated sentence: `event=health_check`, `mqtt_status`, `db_status`, `db_last_write_age_s`, `buffer_used`, `buffer_capacity`, `buffer_utilization_percent`, `processed_last_interval`
 3. MQTT connection status verified using client `IsConnected()` method
-4. Database connection status verified by checking last successful write timestamp (no explicit Ping needed)
+4. Database connection status derived from the outcome of the most recent write, seeded by the startup `Ping` — no explicit `Ping` in the health check. Write recency is reported alongside it as its own field, `db_last_write_age_s`
 5. Buffer utilization calculated from channel length
 6. If buffer utilization >80%, log WARNING: "Message buffer >80% full, possible backpressure"
-7. Health check includes message processing rate: "Processed <n> messages in last 60s"
+7. Health check includes the message processing rate as a `processed_last_interval` field on the same entry: the number of messages written since the previous tick
 8. Health check goroutine uses ticker for precise intervals
 9. Manual test: Monitor logs for 5 minutes, verify health checks appear every 60 seconds with accurate status
 10. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+> **Amended 2026-07-25 (PO), before implementation.** AC2, AC4 and AC7 originally prescribed interpolated log sentences (`"Health check: MQTT=..., DB=..., Buffer=n/capacity messages"`, `"Processed n messages in last 60s"`) and a recency test for the database status. The wording above replaces them.
+>
+> - **AC2 and AC7** — the values become structured attributes and `msg` stays a constant phrase, per the convention Story 2.5 established and the health-check example the architecture already gives. Interpolating the numbers would make the one entry an operator most wants to aggregate the only entry they cannot chart.
+> - **AC4** — a literal recency rule ("a write succeeded in the last 60 s ⇒ connected") reports `disconnected` for a perfectly healthy database whenever no message happened to arrive, and quiet minutes are normal on a home-automation broker. Deriving the status from the *outcome* of the last write honours AC4's real constraint — no `Ping`, a single atomic load, no network call — while dropping only the part of the wording that would produce false alarms. Recency remains reported, as `db_last_write_age_s`.
+>
+> [Source: docs/stories/2.6.story.md → Dev Notes → Deviations]
 
 ---
 

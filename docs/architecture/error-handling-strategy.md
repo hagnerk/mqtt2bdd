@@ -616,6 +616,8 @@ logger.Debug("Retry scheduled",
 - **ERROR:** Failed operations, connection failures
 - **FATAL:** Unrecoverable errors (startup only)
 
+The enumerated values these fields may take — every `component`, `event` and `operation` in use — are documented in [Logging Standards](./logging-standards.md).
+
 ## Operational Error Response Playbook
 
 **Error Response Matrix:**

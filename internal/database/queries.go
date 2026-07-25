@@ -30,6 +30,7 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 	commandTag, err := c.pool.Exec(ctx, query, sensor, timestamp, metrics)
 	elapsed := time.Since(start)
 	if err != nil {
+		c.connected.Store(false)
 		c.logger.Error("failed to insert message",
 			"event", "write_failure",
 			"operation", "insert",
@@ -40,6 +41,13 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 		)
 		return fmt.Errorf("failed to insert message for sensor %s: %w", sensor, err)
 	}
+
+	// Recorded once, before the duplicate/inserted split: a duplicate is a completed
+	// round-trip to a reachable database and a message that left the buffer for good,
+	// so it counts as both a successful interaction and a processed message.
+	c.connected.Store(true)
+	c.lastWriteAt.Store(time.Now().UnixNano())
+	c.writeCount.Add(1)
 
 	if commandTag.RowsAffected() == 0 {
 		c.logger.Warn("duplicate message ignored",

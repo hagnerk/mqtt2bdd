@@ -1,0 +1,124 @@
+schema: 1
+story: "2.6"
+story_title: "Add Application Health Monitoring Logs"
+gate: PASS
+status_reason: "All 12 ACs met and independently re-verified live rather than accepted from the Dev Agent Record: three separate app runs confirmed the 60 s cadence (1-5 ms drift), the full field set, the -1 sentinel, the processed_last_interval delta, and both directions of AC4's write-outcome status. The two findings gate 2.5 deferred (FIND-017, FIND-018) are genuinely closed. Toolchain and tests clean. Two low-severity follow-ups, neither blocking."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-25T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "FIND-020"
+    severity: low
+    finding: "docs/architecture/logging-standards.md is exact where AC12 scopes it — the `component`, `event` and `operation` tables match the code key for key (37 event values across three components, 7 operation values, verified by grep) — but its auxiliary Domain Fields table is not exhaustive. Eleven attribute keys the code emits today have no row: `attempt` (mqtt reconnecting / reconnect_failed), `level` (unknown_log_level), `original_length` and `truncated_topic` (topic_truncated), `timestamp` and `query` (write_success / write_duplicate), `payload` (message_received at DEBUG), and the four pool_stats counters (`acquired_conns`, `idle_conns`, `total_conns`, `max_conns`). Separately, `buffer_size` — emitted on `buffer_full`, a buffer-pressure event — is filed under 'Startup / shutdown'. This is inherited from story 2.5's table rather than introduced here, and none of it weakens the contract AC12 asks for; the risk is that the next reader treats the table as closed and invents a synonym for a field that already exists. Suggested: complete the table in the next story that touches a log line, or state explicitly that it enumerates only the fields the epic's ACs name."
+    suggested_owner: dev
+    refs: ["docs/architecture/logging-standards.md:68-83", "internal/mqtt/client.go:156", "internal/database/queries.go:19-23", "internal/database/client.go:139-147"]
+  - id: "FIND-021"
+    severity: low
+    finding: "The two pure computations inside healthCheckLoop are unreachable from a test. The story deliberately excluded a timing test of the ticker, which is right — but the `processed := total - lastWriteCount` delta and the `-1` age sentinel are arithmetic, not timing, and they are the parts of AC4/AC7 that a regression would silently break. Both are currently proven only by manual replay (done, and reproduced by this review). Extracting a `writeAgeSeconds(lastWrite, now time.Time) int64` helper alongside the existing `connectionStatus` / `bufferUtilizationPercent` pair would make the sentinel branch table-testable at zero design cost and without making the interval injectable. The delta is harder to isolate without a seam, and is lower value — unsigned subtraction against a monotonic counter is correct by construction."
+    suggested_owner: dev
+    refs: ["cmd/mqtt2bdd/main.go:119-129", "cmd/mqtt2bdd/main_test.go"]
+
+resolved_issues:
+  - id: "FIND-017"
+    severity: low
+    resolution: "Closed by AC12 / Task 1. The Log Field Vocabulary now lives at docs/architecture/logging-standards.md, reachable from docs/architecture/index.md (placed immediately after Error Handling Strategy, as instructed) and from a one-line cross-reference at the end of error-handling-strategy.md#logging-standards-for-errors. Verified current with the code, not merely extracted: the union of the three per-component event tables is exactly the 37 distinct values grep finds in the tree, including the four *_failed values that made the story-2.5 copy stale, and the operation list matches the 7 values in use. The monolithic docs/architecture.md was correctly left alone."
+    verified_by: "Quinn (Test Architect), 2026-07-25"
+  - id: "FIND-018"
+    severity: low
+    resolution: "Closed by AC11 / Task 2. logger.EffectiveLevel is now the single place the level mapping exists, NewLogger calls it, and config_loaded carries both values. Reproduced live with LOG_LEVEL=VERBOSE: `event=config_loaded log_level=VERBOSE effective_log_level=INFO buffer_size=1000`, with the unknown_log_level WARN still firing. The story's prohibition on widening the accepted set was respected — grep confirms no `case \"WARN\"` was added, so LOG_LEVEL=WARN still resolves to INFO and still warns, exactly as before."
+    verified_by: "Quinn (Test Architect), 2026-07-25"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 2 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-020: the Domain Fields table omits eleven keys the code emits; the event/operation contract itself is exact."
+      - "FIND-021: the health loop's delta and -1 sentinel are proven by manual replay only."
+      - "AC6's WARN emission is the one behaviour verified by the Dev Agent Record alone in this review — the boundary arithmetic is unit-tested and the branch is two lines, but a QA replay would need BUFFER_SIZE=5 and a stopped database."
+
+quality_score: 95
+expires: "2026-08-08T00:00:00Z"
+
+evidence:
+  tests_reviewed: 4  # TestBufferUtilizationPercent (5 subtests, new), TestConnectionStatus (2, new), TestEffectiveLevel (6, new), TestClientHealthZeroValues (3, new) — 16 subtests
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "health_monitor_started … interval_s=60 observed in the startup sequence between writer_started and subscribing, in all three QA runs. The goroutine is launched after the DB writer and before Subscribe, on its own healthWG, exactly as Task 4 prescribes."
+    - ac: 2
+      note: "Every field of the AC's enumerated set present on every observed entry, carrying component=main by inheritance: mqtt_status, db_status, db_last_write_age_s, buffer_used, buffer_capacity, buffer_utilization_percent, processed_last_interval. The documented deviation (structured attributes rather than an interpolated sentence) is implemented as specified and, per the story's instruction and the PO's PRD amendment, is not raised as a defect."
+    - ac: 3
+      note: "mqttClient.IsConnected() is called directly on the tick (main.go:133). Not exercised against a stopped broker by this review — the dev's replay covers it and the call is a one-liner against an already-shipped method. Noted for the record: FIND-010's interaction (a failed re-subscription leaves IsConnected() true while nothing is received) is a faithful report of the connection, as the story states, not a defect here."
+    - ac: 4
+      note: "Both directions reproduced independently. With postgres stopped and one message published, the write failed (write_failure every 10 s via insertWithRetry) and the next tick reported db_status=disconnected db_last_write_age_s=-1. After restarting postgres the retried write succeeded and the following tick reported db_status=connected db_last_write_age_s=48 processed_last_interval=1. The seeding path is equally confirmed: a fresh run reports db_status=connected on its first tick, from the startup Ping alone, with db_last_write_age_s=-1. No Ping method was added — grep-verified — and IsConnected() performs no network call."
+    - ac: 5
+      note: "bufferUtilizationPercent is unit-tested including the capacity==0 guard (0, not NaN) and the exact-80 / 80.1 boundary pair. Live entries reported buffer_used=0 buffer_capacity=1000 buffer_utilization_percent=0 against the default buffer."
+    - ac: 6
+      note: "Threshold is strictly greater than bufferHighWaterMarkPercent, and the WARN is a separate entry with its own event=buffer_high, as required. The rounding cannot manufacture a false WARN: a rounded value above 80 requires 80.05 actual, so the error direction is conservative. Emission itself verified by the dev's BUFFER_SIZE=5 replay, not re-run here."
+    - ac: 7
+      note: "processed_last_interval=2 on the tick following two published messages, then 0 on the next — reproduced by this review. WriteCount is monotonic and the delta is computed per tick, so a duplicate write counts once, as the story requires."
+    - ac: 8
+      note: "time.NewTicker with defer Stop, select on ticker.C and done. Measured across three runs: ticks 60.002 s, 60.001 s, 60.005 s and 59.993 s apart — under 7 ms of drift, with no accumulation. The done branch returns; healthWG.Wait() is placed after the drain select and before dbClient.Close(), so no goroutine reads the client while its pool is torn down."
+    - ac: 9
+      note: "The dev's five-minute observation is corroborated rather than merely accepted: this review ran the app three more times and observed six further health_check entries at the correct cadence with accurate status in every field."
+    - ac: 10
+      note: "Re-run by QA in the go-dev container: gofmt -l . silent, go vet, staticcheck and go build clean, go test ./... all pass."
+    - ac: 11
+      note: "See FIND-018 resolution. TestEffectiveLevel covers DEBUG/debug/INFO/ERROR/empty/VERBOSE; the live run confirms the pair on config_loaded."
+    - ac: 12
+      note: "See FIND-017 resolution. Contract complete and accurate for component/event/operation; the auxiliary Domain Fields table is not exhaustive — FIND-020."
+
+toolchain_validation:
+  environment: "mqtt2bdd-dev-go-dev container, via docker compose exec from dev/ (2026-07-25)"
+  results:
+    - "gofmt -l . -> clean, no output"
+    - "go vet ./... -> no warnings"
+    - "staticcheck ./... -> no warnings"
+    - "go build ./... -> clean"
+    - "go test ./... -> cmd/mqtt2bdd, internal/config, internal/database, internal/logger all pass; internal/mqtt has no test files"
+    - "go test -race -> not run. The go-dev image ships no C toolchain, so -race (which requires cgo) is unavailable, as the Dev Agent Record states. Confirmed acceptable here by inspection: every field shared across goroutines is a sync/atomic type, and go vet reports no copylocks — Client is only ever handled as *Client."
+
+e2e_validation:
+  note: "Replayed independently in three runs rather than accepted from the Dev Agent Record. Rows inserted by QA (qa/2.6/probe1, probe2, dbdown) were deleted afterwards and the count verified back at its pre-review value of 112; all three containers are running and dev/.env was never modified."
+  results:
+    - "Run 1 (LOG_LEVEL=VERBOSE, 140 s): startup order WARN unknown_log_level -> starting -> config_loaded -> mqtt -> database -> buffer_initialised -> writer_started -> health_monitor_started -> subscribing -> startup_complete. config_loaded carried log_level=VERBOSE effective_log_level=INFO buffer_size=1000 and no credentials (AC1, AC11). Two ticks 60.002 s and 60.001 s after the previous, both with db_status=connected db_last_write_age_s=-1 — the startup-ping seeding and the sentinel, together (AC2, AC4, AC8)."
+    - "Run 2 (two messages published mid-interval): the following tick reported processed_last_interval=2 db_last_write_age_s=54, the next reported 0 and 114. Ticks 60.005 s apart (AC7, AC8)."
+    - "Run 3 (postgres stopped, one message published, postgres restarted): tick at +60 s reported db_status=disconnected db_last_write_age_s=-1 processed_last_interval=0; after the retried write succeeded, the tick at +120 s reported db_status=connected db_last_write_age_s=48 processed_last_interval=1 (AC4, AC7)."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "SEC-001 upheld. The story adds no external surface — no port, no endpoint, no HTTP handler; the health check is a log line, as the architecture's absent REST API requires. The one line whose payload changed is config_loaded, and it was inspected in live output: log_level, effective_log_level and buffer_size only, no DSN and no password. EffectiveLevel takes a level name and returns a slog.Level, so it cannot carry configuration values into the log. The new database accessors expose counts, a boolean and a timestamp — no connection metadata."
+  performance:
+    status: PASS
+    notes: "One tick per minute against three atomic loads, a len and a cap: unmeasurable. The write path gains one Store and one Add per successful insert, on an uncontended cache line, against a round-trip the same function measures at 3-48 ms in this environment. sync/atomic was used as prescribed, not a mutex, and the counters are not batched. No level guard on the health entry is correct — it is INFO and fires once a minute, unlike the per-message DEBUG payload line that does carry one."
+  reliability:
+    status: PASS
+    notes: "The goroutine has a completion mechanism (healthWG) and a clear exit condition (the done case), per the coding standard, and healthWG.Wait() sits after the drain select and before Close() so teardown stays deterministic. Its own WaitGroup rather than wg is the right call and is explained in a comment: joining wg would change what the drained channel means. Measured cost at shutdown is nil. The zero guard in bufferUtilizationPercent is load-bearing — BUFFER_SIZE=0 is a configuration the loader accepts, and the unguarded expression would emit NaN once a minute forever. Accepted consequence, worth stating: on an unbuffered channel utilization is permanently 0, so buffer_high can never fire; backpressure there is still visible through buffer_full. The out-of-scope boundaries held exactly — no Ping method, no logging in dbWriterLoop or insertWithRetry, msgChan still never closed, the health loop only reads len/cap, and the shutdown sequence is otherwise byte-for-byte what story 2.4 left."
+  maintainability:
+    status: PASS
+    notes: "The pure helpers are the right seam: the arithmetic and the two status literals are testable without a broker or a database, and the literals now exist exactly once. Godoc on all four new exported symbols, each starting with the symbol name and stating the non-obvious part — that IsConnected performs no network call, that WriteCount is monotonic and the rate is the caller's delta. Comments explain why (the zero guard, the separate WaitGroup, recording the counters before the RowsAffected split, the -1 sentinel over an omitted field) rather than what. Import grouping, receiver naming and file organisation all conform. One nit, story-sanctioned and not raised as a finding: EffectiveLevel and isKnownLevel each enumerate DEBUG/INFO/ERROR. The story explicitly permitted this shape provided the level mapping exists once, which it does — but the accepted set is now written twice, and a future level added to one and not the other would resolve correctly while still emitting unknown_log_level. A shared map would remove the seam entirely."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "FIND-020: complete the Domain Fields table in docs/architecture/logging-standards.md with the eleven keys the code already emits, or scope the table explicitly so a reader knows it is not exhaustive."
+      refs: ["docs/architecture/logging-standards.md:68-83"]
+    - action: "FIND-021: extract writeAgeSeconds(lastWrite, now) from healthCheckLoop so the -1 sentinel branch is table-testable alongside the other two helpers."
+      refs: ["cmd/mqtt2bdd/main.go:124-129", "cmd/mqtt2bdd/main_test.go"]
+    - action: "Consider collapsing EffectiveLevel and isKnownLevel onto a single map[string]slog.Level, so the accepted set exists once rather than twice. Explicitly permitted by story 2.6 as written; noting the residual drift, not prescribing a change."
+      refs: ["internal/logger/logger.go:27-38", "internal/logger/logger.go:88-95"]
+    - action: "FIND-019 (carried, still open, PO): duration_ms truncates sub-millisecond writes to 0. Untouched by this story as instructed, and db_last_write_age_s correctly stayed in seconds rather than pre-empting the decision."
+      refs: ["internal/database/queries.go:31", "docs/architecture/error-handling-strategy.md#logging-standards-for-errors"]
+    - action: "FIND-016 (carried, still open): the drain path's context.Background() and bare time.Sleep leave the 30 s shutdown bound best-effort. Now slightly more visible: if the drain times out, dbClient.Close() tears down the pool while insertWithRetry may still be using it. Pre-existing, not introduced here, and the writer's next Exec fails cleanly rather than panicking."
+      refs: ["cmd/mqtt2bdd/main.go:44-55", "cmd/mqtt2bdd/main.go:271-283"]
+    - action: "FIND-010 (carried, still open): a failed re-subscription after reconnect leaves the client connected but receiving nothing, and health_check will report mqtt_status=connected throughout. The story is right that this is not a defect in the health check; the retry is still owed."
+      refs: ["internal/mqtt/client.go:166-170"]
+    - action: "Story 3.3 (carried): TestGracefulShutdown remains the home for automated shutdown coverage, including the message_dropped WARN and now healthWG's placement in the teardown order."
+      refs: ["cmd/mqtt2bdd/main.go:278-284", "internal/database/integration_test.go"]
