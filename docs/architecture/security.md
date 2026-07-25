@@ -148,7 +148,9 @@ UID `65534` (`nobody`) and GID `65534` (`nogroup`) are conventionally reserved f
 
 **2. Minimal base image**
 
-The runtime stage uses `alpine:3.23` (~5 MB), not `golang:alpine` (~300 MB). The final image contains only the statically-linked binary and Alpine's minimal userland — no shell tools, no package manager, no Go toolchain.
+The runtime stage uses `alpine:3.23` (8,657,696 bytes, ≈8.7 MB), not `golang:alpine` (~300 MB); the image built from it measures 18,554,844 bytes. The final image contains the statically-linked binary, a CA trust store and Alpine's minimal userland — no Go toolchain and no application source.
+
+Alpine's userland is minimal, not empty: it ships busybox 1.37.0 (304 applets, including `/bin/sh`) and apk-tools 3.0.6, so both a shell and a package manager are present in the runtime image and `docker run --entrypoint sh` resolves. What constrains them is `USER nobody` and the read-only root filesystem below, not their absence.
 
 **3. Read-only filesystem (recommended)**
 
