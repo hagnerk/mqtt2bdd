@@ -225,6 +225,32 @@ opts.AddBroker(fmt.Sprintf("tls://%s:%d", cfg.MQTTBroker, cfg.MQTTTLSPort))
 
 TLS is not enabled by default to avoid operational complexity on the home network. It should be enabled if the deployment ever spans untrusted network segments.
 
+## MQTT Broker Authentication (Accepted Risk, Not a Story)
+
+**Current posture:** `prod/mosquitto/mosquitto.conf` sets `allow_anonymous true`, with `MQTT_HOST_PORT`
+published to the host. `dev/mosquitto/mosquitto.conf` has carried the identical posture since Story 1.1.
+Anyone who can reach the published port can publish and subscribe to any topic, and — because the
+application subscribes to `#` — write rows into `sensor_metrics` with no credential.
+
+**Why this is recorded as an accepted risk rather than assigned to a story.** The posture is consistent
+with the Threat Model above, which already places this deployment on a private home LAN with no public
+exposure and lists "Authentication/authorisation bypass" as explicitly out of scope. It was reviewed and
+deliberately deferred at PO validation for both Story 3.1 and Story 3.2 (`docs/stories/3.1.story.md`,
+`docs/stories/3.2.story.md` → PO Validation) and confirmed sound both times by QA. Neither deferral gave it
+a home, because none of Epic 3's remaining approved stories fits: 3.3 is an integration-test harness, 3.4
+is unit test coverage, 3.5 is the README rewrite, and 3.6 is inline code documentation — none changes
+broker behaviour, and an unapproved seventh Epic 3 story is not created here or by any prior story.
+
+**The escape hatch already ships and works today**, so this note blocks nothing: `internal/config/config.go:83-84`
+reads `MQTT_USERNAME` / `MQTT_PASSWORD`, `internal/mqtt/client.go:53-55` applies them when the username is
+non-empty, and `.env.prod.example` documents both. Enabling authentication requires only a
+`mosquitto_passwd` credential file, `password_file` and `allow_anonymous false` in
+`prod/mosquitto/mosquitto.conf`, and setting the two variables in `.env.prod` — no application code changes.
+
+**Revisit trigger:** the day this stack is deployed anywhere the published MQTT port is reachable from
+outside a trusted LAN, not on a fixed schedule. Until that condition holds, this is an accepted risk against
+a documented threat model, not a deferred task waiting on a story number.
+
 ## Security Checklist (Pre-Deployment)
 
 - [ ] `.env.prod` is not committed to Git

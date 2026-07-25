@@ -43,6 +43,7 @@ mqtt2bdd/
 │
 ├── dev/
 │   ├── docker-compose.yml                  # Dev environment (3 containers)
+│   ├── Dockerfile.dev                      # Dev container image (Delve, staticcheck baked in)
 │   ├── .env.example                        # Template for env variables
 │   ├── init-db/
 │   │   └── 01-schema.sql                   # Database schema init
