@@ -1,0 +1,181 @@
+schema: 1
+story: "3.1"
+story_title: "Create Production Multi-Stage Dockerfile"
+gate: PASS
+status_reason: "All 17 ACs met and re-verified live rather than accepted from the Dev Agent Record: the image was rebuilt (reproducing the Dev's image ID b1ec308a5085 byte for byte), measured at 18,554,844 bytes, dissected by layer, probed adversarially with six planted credential decoys, run against the dev stack through a real MQTT write to PostgreSQL, and stopped with docker stop for the full graceful sequence at exit 0. SEC-001 holds for the distributable artefact. Toolchain and tests clean. Four low-severity follow-ups, none blocking."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-25T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "FIND-022"
+    severity: low
+    finding: "The .dockerignore environment-file globs are root-anchored, but their own comment claims they catch env files 'wherever they sit'. Proven by planting six decoys and enumerating the resulting build context: the three root-level ones (.env, .env.prod, production.env) are genuinely excluded, while internal/.env, cmd/secrets.env and internal/config/.env.prod all entered the context AND the builder stage — because .dockerignore matches a bare pattern only at the context root, whereas .gitignore matches it at any depth. The two files look alike and do not behave alike, which is exactly how this gets copied wrong. AC16 is nonetheless MET: its wording names dev/.env (excluded by `dev/`) and a root-level .env / .env.prod (excluded by the globs), and both are covered. The exposure is latent, not live — no env file exists or is planned under cmd/ or internal/, and even with all six planted the runtime image contained /app/mqtt2bdd and nothing else, since the builder stage is discarded and the COPY is targeted. Suggested: make the globs recursive (**/.env, **/.env.*, **/*.env), or correct the comment so the next reader does not trust a reach the patterns do not have. Nice-to-have alongside it: .gitignore carries .idea/ and *.pid, .dockerignore does not."
+    suggested_owner: dev
+    suggested_story: "3.2"
+    refs: [".dockerignore:10-16"]
+  - id: "FIND-023"
+    severity: low
+    finding: "AC1 requires 'two stages: `builder` and `runtime`'. Only the first is named: line 4 is `FROM golang:1.23-alpine AS builder`, line 28 is a bare `FROM alpine:3.23`. Consequences are small but real and were verified rather than assumed — `docker build --target runtime .` fails with 'target stage \"runtime\" could not be found', and BuildKit labels every runtime step `[stage-1 n/3]` in build output, which is less legible than it needs to be for a story whose deliverable is read by operators. AC1 is met in substance (two stages exist; the one that COPY --from addresses is named exactly as required), so this is AC fidelity rather than a defect. Ownership is shared and none of it is the Dev agent's: the PO-validated reference shape in Dev Notes → The Dockerfile also omits `AS runtime`, and the Dev implemented that shape faithfully. Suggested: append `AS runtime` to line 28 — a one-word change that makes the file match its own AC."
+    suggested_owner: dev
+    suggested_story: "3.2"
+    refs: ["Dockerfile:28", "docs/stories/3.1.story.md:371"]
+  - id: "FIND-024"
+    severity: low
+    finding: "AC17's stated purpose is that 'the architecture and the Dockerfile stop contradicting each other'. Item 2 of security.md#container-security still contradicts it, in the very sentence the story edited. It reads: 'The runtime stage uses `alpine:3.23` (~5 MB) ... The final image contains only the statically-linked binary and Alpine's minimal userland — no shell tools, no package manager, no Go toolchain.' Measured against the shipped image: the base is 8,657,696 bytes, not ~5 MB; busybox 1.37.0 is present with 304 applets including /bin/sh (this review used it repeatedly); and apk-tools 3.0.6 is present at /sbin/apk — the Dockerfile's own `RUN apk add` proves the package manager exists in the runtime base. Only 'no Go toolchain' is true. The Dev agent is not at fault: Task 4 enumerated exactly one change in that item (alpine:3.21 -> alpine:3.23) and the scope guard forbade widening, so following instructions produced this. It is worth raising because Story 3.2 reads this section for read_only: and tmpfs: and will be reasoning about an image it is told has no shell. Suggested: correct the size figure and the 'no shell tools, no package manager' clause in whichever story next opens this shard."
+    suggested_owner: sm
+    suggested_story: "3.2"
+    refs: ["docs/architecture/security.md:151"]
+  - id: "FIND-025"
+    severity: low
+    finding: "Docker's default stop grace is 10 s; defaultShutdownTimeout in main.go is 30 s. The deferral to docker-compose.prod.yml in Story 3.2 is assessed as SOUND on its merits, not merely convenient: there is no Dockerfile instruction that can set a stop grace period — STOPSIGNAL sets the signal, not the timeout — so the fix can only live in `stop_grace_period:` (compose) or `--stop-timeout` (docker run). Story 3.1 cannot fix this in its own artefact, and correctly does not create docker-compose.prod.yml. The gap has genuine teeth in exactly the scenario the 30 s bound exists for: with a non-empty buffer and a database outage, insertWithRetry retries every 10 s indefinitely, so the drain can run the full 30 s, at which point a plain `docker stop` has already SIGKILLed the process at t+10 s — losing buffered messages, yielding exit 137, and emitting neither flush_timeout nor shutdown_complete. Not exercised in the happy path: this review measured shutdown at 0.216 s with exit 0. What is weak is the deferral MECHANISM, not the decision — it currently exists only as prose inside a story about to close, which is precisely the failure mode FIND-017 was raised for on this project. Suggested: register it as an explicit AC on Story 3.2 rather than a note."
+    suggested_owner: sm
+    suggested_story: "3.2"
+    refs: ["cmd/mqtt2bdd/main.go:25", "cmd/mqtt2bdd/main.go:264-276", "docs/stories/3.1.story.md:127"]
+
+resolved_issues: []
+
+carry_forward_check:
+  note: "Confirmed that story 3.1 pulled in none of the open findings the carry-forward register assigned elsewhere. Verified against the shipped diff (git show HEAD --stat lists no .go file and no logging-standards.md or components.md change), not against the Dev's assertion."
+  results:
+    - "FIND-020 (Domain Fields table omits ~11 emitted keys) and the components.md:174 `Ping(ctx) error` entry -> Story 3.6. Not touched: this story emits no log line and opens neither shard."
+    - "FIND-021 (extract writeAgeSeconds so the -1 sentinel is table-testable) and the EffectiveLevel / isKnownLevel nit -> Story 3.4. Not touched: no Go source changed."
+    - "FIND-016 (unbounded shutdown drain) and the message_dropped WARN assertion -> Story 3.3. Not touched. Noted for 3.3's benefit: FIND-025 above interacts with FIND-016 — a 10 s container grace makes the already best-effort 30 s bound moot in deployment."
+    - "FIND-019 (duration_ms truncation) and FIND-010 (no re-subscription retry) -> Story 3.7, which does not yet exist in the PRD. Not touched. Incidentally corroborated live: this review observed duration_ms=26 against the containerised Postgres, so FIND-019 is still latent rather than degenerate in this environment."
+    - "SEC-001 (gate 1.3) is correctly treated as a standing constraint rather than a carried finding, and it is correctly the load-bearing justification for AC16. Upheld here — see nfr_validation.security."
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 4 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-022: .dockerignore env globs reach root level only; the comment claims otherwise. Latent, not live — the distributable image is provably clean."
+      - "FIND-023: the runtime stage is anonymous, so `--target runtime` does not resolve and AC1's second stage name is unrealised."
+      - "FIND-024: security.md still tells the next story the image has no shell and no package manager; it has both."
+      - "FIND-025: the 10 s container stop grace truncates the app's 30 s drain bound. Deferral to 3.2 is sound; the prose-only mechanism is not."
+      - "AC11 headroom is 7.2% decimal / 11.5% binary. Comfortable, not generous — any future package addition needs measuring, not estimating."
+
+quality_score: 90
+expires: "2026-08-08T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0  # No automated test added, correctly — this story writes no Go code and a Dockerfile is not assertable by the Go test framework. The 4 existing test packages were re-run as a regression check.
+  risks_identified: 4
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "GIVEN a repository with no Dockerfile, WHEN the story ships, THEN a root Dockerfile exists with two FROM instructions and the compile stage is addressable as `builder`. Verified: line 4 `FROM golang:1.23-alpine AS builder`, line 28 `FROM alpine:3.23`, and `docker build --target builder` resolves. Met in substance; the second stage is unnamed — FIND-023."
+    - ac: 2
+      note: "GIVEN the builder stage, WHEN the build runs, THEN it executes on golang:1.23-alpine with a working Go toolchain. Verified by execution, not by reading: the build log resolves docker.io/library/golang:1.23-alpine and `go mod download` plus `go build` complete inside it. The shipped binary records go1.23.12."
+    - ac: 3
+      note: "GIVEN `ARG VERSION=dev` in the builder, WHEN --build-arg VERSION=0.1.0 is passed, THEN the value reaches the compile. Verified indirectly but conclusively: the literal 0.1.0 is embedded in the shipped binary and appears in its recorded -ldflags. The runtime-stage re-declaration is separately proven by AC12's label reading back as 0.1.0 rather than the empty string."
+    - ac: 4
+      note: "GIVEN AC4's exact build command, WHEN the binary is inspected, THEN the recorded build settings match it. Verified against the SHIPPED binary extracted from the image with docker cp — deliberately stronger than the story's prescribed rebuild-in-go-dev, which would only prove the command line works. `go version -m` reports build -ldflags=\"-s -w -X main.Version=0.1.0\". The two-step COPY (go.mod/go.sum then cmd/ and internal/) satisfies all three actions AC4 names and gives go mod download its own cache layer, demonstrated reused on the second build."
+    - ac: 5
+      note: "GIVEN AC5 asks main.go to declare `var Version = \"dev\"`, WHEN the tree is read, THEN it already does. Confirmed at cmd/mqtt2bdd/main.go:42 with its godoc at :41, package-level in package main (not a const, not function-scoped — which is what makes -X main.Version writable), surfaced at :174 and :251. The 'verify, do not implement' deviation is correct and `git show HEAD --stat` confirms no .go file is in this story's commit. This story genuinely writes no Go code."
+    - ac: 6
+      note: "GIVEN a static binary, WHEN musl's ldd is run on it, THEN it reports 'Not a valid dynamic program' and exits non-zero — the counter-intuitive pass condition, observed (exit 1). Corroborated two further independent ways: the ELF header reads type 0x02 (ET_EXEC, fixed-position static executable, not ET_DYN), and the binary contains zero occurrences of the string `ld-musl`, so there is no dynamic interpreter to reference. And from the recorded settings: build CGO_ENABLED=0, build GOOS=linux. GOARCH=arm64 is inherited from the daemon because the Dockerfile correctly does not set it."
+    - ac: 7
+      note: "GIVEN AC7 pins alpine:3.23 against the architecture's ~3.21, WHEN the image is built, THEN the runtime layer is alpine-minirootfs-3.23.5-aarch64. Verified in docker history. The PRD-wins direction and the AC17 amendment are the PO's ruling and are implemented as ruled. The builder/runtime Alpine-minor mismatch (3.22.x under golang:1.23-alpine vs 3.23) is harmless as the story argues, and this review's static-linking evidence is what proves it: a binary that links no libc cannot observe the difference."
+    - ac: 8
+      note: "GIVEN `apk add --no-cache ca-certificates`, WHEN the image is inspected, THEN the full package is installed and no apk index remains. Verified: `apk info` lists ca-certificates alongside the base's ca-certificates-bundle, and /usr/sbin/update-ca-certificates is present — which is precisely what distinguishes the full package from the bundle subpackage, so AC8's letter was honoured and the PO's pre-authorised fallback substitution was genuinely not exercised. /var/cache/apk measures 0 bytes, confirming --no-cache. /etc/ssl/certs/ca-certificates.crt present at 182,789 bytes. Nothing else was installed — the package list is the Alpine base set plus ca-certificates only. The trust store's PURPOSE is accepted by reading, not exercised: this project speaks plain TCP to both MQTT and PostgreSQL today."
+    - ac: 9
+      note: "GIVEN COPY --from=builder, WHEN /app is listed in the runtime image, THEN it contains exactly one file: mqtt2bdd, 9,371,800 bytes, root-owned, mode 0755. No chown was applied, so no 9 MB layer was duplicated — confirmed by docker history showing a single 9.37MB COPY layer."
+    - ac: 10
+      note: "GIVEN `USER nobody`, WHEN the container runs, THEN the process is unprivileged. Verified three independent ways rather than one: `docker exec mqtt2bdd-smoke id` -> uid=65534(nobody) gid=65534(nobody) groups=65534(nobody); the image config .Config.User reads `nobody`; and /proc/1/status inside the running container reports Uid: 65534 65534 65534 65534. The directive sits after apk add and COPY, both of which need root, as required."
+    - ac: 11
+      note: "GIVEN a 20MB target, WHEN the image is measured, THEN 18,554,844 bytes — matching the PO's projection AND the Dev's report to the byte, on an independent rebuild. Passes under BOTH readings, stated explicitly since '20MB' is ambiguous: decimal 20,000,000 leaves 1,445,156 B (7.2%) and binary 20,971,520 leaves 2,416,676 B (11.5%). docker history confirms the composition is exactly the three predicted components with no fourth: 8.66MB base + 525kB ca-certificates + 9.37MB binary; LABEL, USER and ENTRYPOINT contribute 0 B each. No fallback-ladder step was taken and none was needed."
+    - ac: 12
+      note: "GIVEN three labels, WHEN they are read back off the built image, THEN version=0.1.0, description and authors are all present and non-empty. The version label expanding correctly is the load-bearing check here: without the runtime-stage `ARG VERSION=dev` re-declaration it would silently be the empty string and nothing else in this story would catch it. The story anticipated the trap and the implementation avoided it. OCI annotation keys used; the deprecated MAINTAINER instruction is absent. That `authors` is the right key for AC12's 'maintainer' is a spec judgement read, not executed; the value matches git config user.email."
+    - ac: 13
+      note: "GIVEN exec-form ENTRYPOINT, WHEN the container receives SIGTERM, THEN the binary handles it as PID 1. Verified BOTH structurally and behaviourally, deliberately: inside the running container /proc/1/exe -> /app/mqtt2bdd, /proc/1/cmdline is exactly '/app/mqtt2bdd', /proc/1/status Name: mqtt2bdd — no shell interposed, which is direct evidence where the shutdown observation is inferential. Then behaviourally: docker stop produced shutdown_signal signal=terminated -> disconnected(mqtt) -> flush_complete count=0 -> disconnected(database) -> shutdown_complete, container exit code 0, wall time 0.216 s. A shell-form entrypoint would have swallowed the signal and yielded exit 137 at the 10 s deadline. Story 2.4's graceful shutdown survives the image intact. Image config also confirms Cmd=null, no StopSignal, no Healthcheck, no ExposedPorts, no Volumes."
+    - ac: 14
+      note: "GIVEN --build-arg VERSION=0.1.0, WHEN the container starts, THEN the logs carry the injected version. Observed first-hand: `event=starting version=0.1.0` and `event=startup_complete version=0.1.0`. Not version=dev, so the -X injection took through both the ARG and the ldflags. The build itself completed with no warnings."
+    - ac: 15
+      note: "Regression check, re-run by QA in mqtt2bdd-dev-go-dev via docker compose exec from dev/: gofmt -l . silent, go vet clean, staticcheck clean, go build clean, go test -count=1 ./... all pass. Identical to the PO's baseline and to the end-of-2.6 state. Correctly treated as a regression check rather than a judgement on new code, since no Go source changed. No Dockerfile linter was installed, per the story's explicit instruction."
+    - ac: 16
+      note: "GIVEN .dockerignore, WHEN the build context is enumerated, THEN it holds 16 files totalling 57,806 bytes — .dockerignore, Dockerfile, go.mod, go.sum and the eleven .go files. Measured by building a probe image that COPYs the whole context and reading du -sb, because BuildKit's transfer figure is unreliable across warm sessions (my --no-cache rebuild reported only 841 B). Absent by enumeration rather than inference: .git, dev/ (and dev/.env), docs/, bin/mqtt2bdd, __debug_bin262058197, .bmad-core/, .claude/, .vscode/, README.md, CLAUDE.md, .gitignore. ~28.2 MB of dead weight reduced to 57.8 kB. Then probed adversarially with six planted decoys — see FIND-022. AC16 is MET as worded; the file's comment overstates its reach."
+    - ac: 17
+      note: "GIVEN four bounded corrections, WHEN each edited fact is checked against the shipped artefact, THEN all are true. The security.md dockerfile snippet asserts FROM alpine:3.23, RUN apk add --no-cache ca-certificates, COPY --from=builder /app/mqtt2bdd /app/mqtt2bdd, USER nobody, ENTRYPOINT [\"/app/mqtt2bdd\"] — all five verified true of the file that shipped. nobody = UID/GID 65534 verified live. The checklist now names USER nobody, which the image sets. tech-stack.md reads ~1.23-alpine and ~3.23, matching AC2 and AC7. The SCOPE GUARD HELD: the diff changes version strings, the USER line, the binary path and the checklist entry. The one paragraph of reasoning that changed had to — the old sentence asserted 'The Dockerfile itself requires no USER directive', which this story makes false — and it was replaced with a correction of that specific claim, not with new rationale about static binaries or non-root users. Story 3.6 AC9 was not pre-empted. docs/architecture.md (the monolith) and docs/architecture/index.md were correctly left untouched. One pre-existing contradiction in an adjacent, non-enumerated sentence survives — FIND-024."
+
+reproducibility:
+  note: "The independent rebuild produced image ID sha256:b1ec308a5085c55a0cbb809ab7f1508553a691c7dbff06c9169cef2f85e28cf5 — byte-identical to the ID recorded in the Dev Agent Record. The build is reproducible on this host, which is what allows every measurement below to be compared directly against the Dev's."
+
+toolchain_validation:
+  environment: "mqtt2bdd-dev-go-dev container (go1.23.12 linux/arm64, staticcheck 2025.1.1 / 0.6.1), via docker compose exec from dev/ (2026-07-25)"
+  results:
+    - "gofmt -l . -> clean, no output, exit 0"
+    - "go vet ./... -> no warnings, exit 0"
+    - "staticcheck ./... -> no warnings, exit 0"
+    - "go build ./... -> clean, exit 0"
+    - "go test -count=1 ./... -> cmd/mqtt2bdd, internal/config, internal/database, internal/logger all pass; internal/mqtt has no test files. Unchanged from end-of-2.6, not a defect."
+    - "No Dockerfile linter run. hadolint is not in tech-stack.md and is not installed in the dev image; the story explicitly forbids installing one. The Dockerfile was reviewed by reading and by probing the built artefact."
+
+e2e_validation:
+  note: "Replayed independently rather than accepted from the Dev Agent Record. The image was rebuilt, run detached on mqtt2bdd-dev_mqtt2bdd-dev-network with --env-file dev/.env, driven with mosquitto_pub through the compose SERVICE name, and stopped with docker stop. Run detached rather than foreground deliberately: --rm would have destroyed the logs on exit, and the post-stop log stream is the evidence for AC13. Cleanup completed in full — see cleanup below."
+  results:
+    - "Startup (AC14): event=starting version=0.1.0 -> config_loaded (log_level=DEBUG effective_log_level=DEBUG buffer_size=1000) -> mqtt connecting/connected -> database connecting/connected -> pool_stats -> buffer_initialised -> writer_started -> health_monitor_started interval_s=60 -> subscribing/subscribed topic=# -> startup_complete version=0.1.0. buffer_size=1000 from config.LoadConfig's default confirms BUFFER_SIZE is correctly absent from dev/.env, as the PO's correction stated."
+    - "Identity (AC10): docker exec mqtt2bdd-smoke id -> uid=65534(nobody) gid=65534(nobody) groups=65534(nobody). Cross-checked against .Config.User (nobody) and /proc/1/status (Uid: 65534)."
+    - "PID 1 (AC13): /proc/1/exe -> /app/mqtt2bdd, /proc/1/cmdline = '/app/mqtt2bdd', Name: mqtt2bdd. The binary is PID 1 with no shell wrapper — structural proof of the exec form, independent of the shutdown behaviour."
+    - "End-to-end write: mosquitto_pub -t 'qa/3.1/probe' -m '{\"temp\":21.5,\"probe\":\"qa-3.1\"}' produced message_received payload_size=30 then write_success duration_ms=26. The row genuinely reached PostgreSQL and was read back: qa/3.1/probe | 2026-07-25 18:40:10.976226 | {\"temp\": 21.5, \"probe\": \"qa-3.1\"}. Table count moved 112 -> 113. Payload kept valid JSON so insertWithRetry could not wedge."
+    - "Graceful shutdown (AC13): docker stop -> shutdown_signal signal=terminated -> disconnected(mqtt) -> flush_complete count=0 -> pool_stats -> disconnected(database) -> shutdown_complete. Container exit code 0, wall time 0.216 s. Well inside Docker's 10 s grace on the happy path — see FIND-025 for the path where it would not be."
+    - "SEC-001 on the log stream: dev/.env carries POSTGRES_PASSWORD=dev_password. Across the full DEBUG log stream, grep -c 'dev_password' -> 0 and grep -ci 'password|dsn|postgres://' -> 0."
+
+security_probe:
+  note: "SEC-001 is the standing constraint on this project and this is the first story to build an artefact that could carry a credential outside the log stream. It was probed adversarially rather than inferred from the .dockerignore contents, per the review standard. Six decoy files containing a fake POSTGRES_PASSWORD were planted, three builds were run, the context and both image stages were enumerated, and the decoys were then deleted (git status confirmed clean afterwards)."
+  results:
+    - "Root-level decoys EXCLUDED: .env (by pattern `.env`), .env.prod (by `.env.*`), production.env (by `*.env`). These are the two locations AC16 names — dev/.env is separately excluded by `dev/`."
+    - "Nested decoys NOT excluded: internal/.env, cmd/secrets.env, internal/config/.env.prod all appeared in the context manifest and, via COPY cmd/ and COPY internal/, in /src of the builder stage. Root cause: .dockerignore patterns are anchored at the context root and `*` does not cross `/`, unlike .gitignore where a bare pattern matches at any depth. See FIND-022."
+    - "RUNTIME IMAGE CLEAN even with all six decoys planted: `ls -la /app` returns only mqtt2bdd, and a find across the image for *.env, .env* and .git returns empty. The targeted COPY keeps the builder stage's contents out of the distributable artefact, and the builder stage is discarded. This is the check that matters for SEC-001 and it passes."
+    - "No secret in build metadata: the only build arg is VERSION, which docker history exposes as `ARG VERSION=0.1.0` — not a credential. .Config.Env carries only the PATH inherited from the Alpine base; no ENV was added, so no default host, port or password is baked in."
+    - "Build context measured at 57,806 bytes over 16 files, against a working tree carrying ~28.2 MB at the root (bin/mqtt2bdd 13.7 MB, __debug_bin262058197 14.5 MB, .git 16 MB, docs/ 992 kB)."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "SEC-001 holds for the artefact this story creates, and it was probed rather than assumed — six planted decoys, three builds, both stages enumerated. The distributable runtime image contains /app/mqtt2bdd and nothing else: no env file, no .git, no source, no ENV default, no secret-bearing build arg. The log stream carries no credential at DEBUG against a real password value. USER nobody makes the image non-root BY DEFAULT rather than only when the deployer remembers a compose key, which is the substantive security gain of the AC10 ruling and is defence in depth ahead of Story 3.2's user: 65534:65534. The builder stage — which holds the toolchain and the full source — is discarded and never distributed. The one gap is latent rather than live and is recorded as low: the env globs are root-anchored (FIND-022), so a file placed under cmd/ or internal/ would reach the context and the builder, though never the shipped image. No such file exists, none is planned, and the failure mode is contained by the targeted COPY. Not raised to CONCERNS because nothing about the shipped artefact or the current tree is exposed."
+  performance:
+    status: PASS
+    notes: "No run-time change — this story writes no Go code, and the observed write path (duration_ms=26) is unchanged from 2.6. The build-time posture is good and measured rather than asserted: -s -w are worth 4,294,122 bytes on a 20 MB budget (13,665,922 unstripped -> 9,371,800 stripped) and are present; --no-cache leaves /var/cache/apk at 0 bytes; the two-step COPY gives go mod download its own layer, demonstrated reused on the second build. Context transfer is 57.8 kB rather than ~28.2 MB, so an unrelated commit neither re-sends nor cache-busts. Headroom against AC11 is 7.2% decimal / 11.5% binary — comfortable but not generous, and worth restating for Story 3.2: a future package must be measured, not estimated. Startup to startup_complete took 6 ms in the container."
+  reliability:
+    status: PASS
+    notes: "The image preserves the graceful shutdown that stories 2.4 and 2.6 built, which was the single largest risk in packaging this application, and it was verified in both directions rather than one: structurally (the binary is PID 1 with no shell interposed) and behaviourally (the full sequence, exit 0, in 0.216 s). The prohibitions are correct and were checked on the built image, not the source: no HEALTHCHECK — there is no probe to run in an image whose health signal is a log line, and a broken healthcheck is worse than none; no EXPOSE — the application serves nothing; no VOLUME — it keeps no state, which is also what makes read_only: true viable for Story 3.2. Configuration arrives entirely at run time. The one real reliability gap belongs to deployment rather than to this artefact and is correctly deferred: FIND-025's 10 s container grace against a 30 s drain bound, which no Dockerfile instruction can fix. Deferral sound; mechanism weak."
+  maintainability:
+    status: PASS
+    notes: "The Dockerfile is 51 lines and every non-obvious one carries the reason it exists rather than a restatement of what it does — 'CGO_ENABLED=0 is what makes the binary static', 'ARG does not cross a FROM boundary', 'Exec form, so the binary is PID 1'. Those are exactly the three comments that stop a future maintainer deleting a load-bearing line, which is the standard coding-standards.md#comments-and-documentation sets, and it is a genuinely high bar met. The .dockerignore is grouped by intent with a rationale per group. English throughout both files. AC17 leaves the architecture describing the artefact that actually shipped, which is the discipline FIND-017 and FIND-020 exist to enforce, and it is the right call to have kept it here rather than routing it to 3.6. Two blemishes, both documentary and both low: the runtime stage carries no name (FIND-023), and one adjacent sentence in security.md still describes an image with no shell and no package manager (FIND-024)."
+
+testability:
+  controllability: "Good. VERSION is the single build-time input and is injectable per-build; everything else arrives from the environment at run time, so the image can be pointed at any broker or database without a rebuild. The story's --env-file dev/.env pattern exercises this and needs no file edit."
+  observability: "Good, and the reason this review could be thorough. Every AC leaves a machine-readable trace off the built image — .Size, .Config.Labels, .Config.User, .Config.Entrypoint, docker history for the layer breakdown, go version -m for the build settings — so nothing had to be taken on trust. The application's own structured log stream supplies AC14 and AC13 directly."
+  debuggability: "Adequate, with one caveat worth naming. The runtime image retains busybox, so `--entrypoint sh` gives a shell for post-mortem inspection — which this review used repeatedly and which a scratch or distroless base would have removed. The caveat is the flip side of FIND-024: that debuggability is real, and security.md tells the reader it does not exist. The anonymous runtime stage (FIND-023) also makes build output read `stage-1`, which is one small step less legible than it needs to be."
+
+cleanup_verification:
+  note: "Every artefact this review created was removed, and the environment was returned to its starting state. Confirmed by re-measurement, not by assertion."
+  results:
+    - "sensor_metrics row count: baseline 112 before review -> 113 after the probe write -> DELETE 1 by topic (qa/3.1%, smoke/3.1%) -> 112 after. Residual rows matching qa% or smoke%: 0. Deleted by topic rather than by id, as instructed, in case the dev app produced a second row; it did not (the dev app was not consuming)."
+    - "Containers removed: mqtt2bdd-smoke, plus one lingering probe container. No QA container remains."
+    - "Images removed: mqtt2bdd:0.1.0, mqtt2bdd:0.1.0-qa-nocache, qa-ctxprobe:3.1, qa-ctxprobe:3.1-canary, qa-builderprobe:3.1, qa-runtimeprobe:3.1, qa-targetprobe-builder:3.1. No mqtt2bdd image remains apart from the pre-existing mqtt2bdd-dev-go-dev:latest."
+    - "Deliberately preserved: alpine:3.23 and golang:1.23-alpine (base images, needed by any future build), and the shared BuildKit cache — docker builder prune and docker system prune were NOT run, and 6.278 GB of cache shared with other projects on this machine is intact."
+    - "Six decoy credential files created for the SEC-001 probe were deleted; git status is clean and no tracked or untracked file was left behind."
+    - "dev/.env untouched — not edited, not copied, size and mtime unchanged. The dev stack (go-dev, mosquitto, postgres) was never restarted and all three containers are running."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "FIND-022: make the .dockerignore environment-file globs recursive (**/.env, **/.env.*, **/*.env), or correct the comment that claims they catch env files 'wherever they sit'. The patterns are root-anchored; the comment says otherwise, and .gitignore's any-depth matching makes that an easy assumption to carry over wrongly."
+      refs: [".dockerignore:10-16"]
+    - action: "FIND-023: append `AS runtime` to the second FROM, so the Dockerfile matches AC1's wording, `docker build --target runtime` resolves, and build output stops reading `stage-1`."
+      refs: ["Dockerfile:28"]
+    - action: "FIND-024: correct security.md item 2 — the base is 8,657,696 bytes not ~5 MB, and the image ships busybox 1.37.0 (304 applets, including /bin/sh) and apk-tools 3.0.6. Only 'no Go toolchain' is currently true. Story 3.2 reads this section for read_only: and tmpfs:."
+      refs: ["docs/architecture/security.md:151"]
+    - action: "FIND-025 (Story 3.2): set stop_grace_period: 30s in docker-compose.prod.yml to match defaultShutdownTimeout, and register it as an explicit AC rather than inheriting it as a prose note from a closed story. No Dockerfile instruction can set a stop grace period, so 3.2 is genuinely the only place this can live."
+      refs: ["cmd/mqtt2bdd/main.go:25", "docs/stories/3.1.story.md:127"]
+    - action: "Minor context hygiene, not a finding: .gitignore carries .idea/ and *.pid, .dockerignore carries neither. A JetBrains .idea/ directory can run to tens of megabytes and would enter the build context on the maintainer's machine. One line, whenever the file is next opened."
+      refs: [".dockerignore", ".gitignore"]
+    - action: "Book-keeping for the orchestrator, not a defect of this story: the story-3.1 commit (3865f11) also carries the PO's .bmad-core/core-config.yaml prdSharded fix. The Dev's File List correctly does not claim it — the PO documented it in PO Validation (Draft) ruling 6 and flagged it — but the two changes are conflated in one commit, so anyone reading the commit alone will attribute it to the Dev."
+      refs: [".bmad-core/core-config.yaml"]
+    - action: "Carried, still open, unchanged by this story: FIND-020 and the components.md Ping(ctx) entry (Story 3.6); FIND-021 and the EffectiveLevel/isKnownLevel nit (Story 3.4); FIND-016 and the message_dropped WARN assertion (Story 3.3); FIND-019 and FIND-010 (Story 3.7, not yet drafted). Story 3.1 correctly pulled in none of them — verified against the shipped diff."
+      refs: ["docs/qa/gates/2.6-add-application-health-monitoring-logs.yml", "docs/stories/2.6.story.md#carry-forward-register"]
