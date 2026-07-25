@@ -1,0 +1,118 @@
+schema: 1
+story: "2.5"
+story_title: "Enhance Structured Logging for Operations"
+gate: PASS
+status_reason: "All 12 ACs met and independently verified by live E2E replay, not merely by the Dev Agent Record. Every log call site in the tree emits through a component-tagged logger exactly once, three previously silent failure paths now log before exiting 1, and SEC-001 holds even in the pgx error path. Toolchain and tests clean. Three low-severity follow-ups, none blocking."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-25T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "FIND-017"
+    severity: low
+    finding: "The Log Field Vocabulary — the authoritative contract for `component`/`event`/`operation` across the whole application — lives only in the Dev Notes of story 2.5, which is about to be closed. It is already stale: implementation added four event values (`connect_failed`, `subscribe_failed`, `resubscribe_failed`, `reconnect_failed`) that the table does not list. The dev agent flagged the extension honestly and the values are consistent with the table's own modelling of failure as a distinct event (`write_failure`), so this is drift in the document, not in the code. The risk is forward-looking: the next story touching a log line has no durable reference and will re-derive or contradict the vocabulary. Suggested: extract the table to docs/architecture/ (alongside error-handling-strategy.md) with the four new values folded in, and have the story reference it rather than restate it."
+    suggested_owner: sm
+    refs: ["docs/stories/2.5.story.md:164-195", "docs/architecture/error-handling-strategy.md"]
+  - id: "FIND-018"
+    severity: low
+    finding: "The `config_loaded` line reports the *requested* log level, not the *effective* one. Verified live: with LOG_LEVEL=VERBOSE the entry reads `event=config_loaded log_level=VERBOSE` while the handler is actually running at INFO. An operator reading the stream in order is not misled — the `unknown_log_level` WARN is emitted immediately above it — but anyone grepping `event=config_loaded` in isolation, or reading a log shipped without WARN, concludes DEBUG-adjacent verbosity is active when it is not. Suggested: have the logger package expose the level it resolved to and log that, or add an `effective_log_level` attribute alongside the requested one."
+    suggested_owner: dev
+    refs: ["cmd/mqtt2bdd/main.go:84", "internal/logger/logger.go:27-43"]
+  - id: "FIND-019"
+    severity: low
+    finding: "AC4's `duration_ms` uses elapsed.Milliseconds(), which truncates toward zero, so every sub-millisecond write reports `duration_ms=0`. Not currently degenerate — measured writes against the containerised Postgres came in at 8-27 ms — but a warm pool on production-grade hardware routinely completes an INSERT in well under a millisecond, and the field then reads 0 for exactly the healthy fast path it exists to measure, leaving no way to distinguish 'fast' from 'not measured'. This follows the pattern prescribed in error-handling-strategy.md#logging-standards-for-errors and was mandated verbatim by the story, so it is an architecture-level choice rather than an implementation defect. Suggested: switch the architecture pattern to a float millisecond (elapsed.Seconds()*1000) or log duration_us, and apply it consistently wherever timing is added."
+    suggested_owner: po
+    refs: ["internal/database/queries.go:31", "internal/database/queries.go:38", "internal/database/queries.go:50", "internal/database/queries.go:58", "docs/architecture/error-handling-strategy.md#logging-standards-for-errors"]
+
+resolved_issues:
+  - id: "FIND-015"
+    severity: low
+    resolution: "Fixed in commit f9d8a34. The producer's full-buffer fallback now logs `l.Warn(\"message dropped at shutdown, buffer was full\", \"event\", \"message_dropped\", \"topic\", topic)` in the `case <-done:` branch (cmd/mqtt2bdd/main.go:136-138), adopting the gate's suggested fix and adding the `event` key for grep parity with the rest of the vocabulary. Shutdown-time data loss is now observable. The surrounding shutdown logic is untouched — verified by inspection of the diff: close(done) at main.go:158, the drain loop in dbWriterLoop, and the msgChan-never-closed invariant from FIND-014 all remain exactly as story 2.4 left them."
+    verified_by: "Quinn (Test Architect), 2026-07-25"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 3 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "FIND-017: the log vocabulary contract has no durable home and is already out of date with the code."
+      - "FIND-018: config_loaded advertises a log level that may not be the one in force."
+      - "FIND-019: duration_ms collapses to 0 for sub-millisecond writes, blinding AC4's metric on fast hardware."
+      - "AC12 (message_dropped) is the one AC validated by inspection alone — it needs a full 1000-slot buffer racing shutdown to fire, which neither the unit tests nor the manual E2E exercise. Correct by reading (single log line inside an existing branch, `topic` in scope from the handler closure), but unproven until TestGracefulShutdown lands in Story 3.3."
+
+quality_score: 95
+expires: "2026-08-08T00:00:00Z"
+
+evidence:
+  tests_reviewed: 4  # TestNewLogger (8 subtests, pre-existing), TestInitLogger (pre-existing), TestNewLogger_TimestampIsUTC (4 subtests, new), TestWithComponent (4 subtests, new)
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    ac_gaps: []
+  ac_notes:
+    - ac: 8
+      note: "The only AC with genuine automated coverage. TestNewLogger_TimestampIsUTC asserts the Z suffix and RFC 3339 parse across all four levels, against a bytes.Buffer — a real regression net, not a smoke test. The ReplaceAttr guard (a.Key == slog.TimeKey && len(groups) == 0) correctly spares nested caller attributes named 'time'."
+    - ac: 9
+      note: "Payload-truncation deviation respected exactly. Confirmed by grep that no TruncatePayload helper and no maxDebugPayloadLen constant exist anywhere in the tree, and by live replay that a 411-byte JSON payload was emitted whole with no ellipsis or truncation marker. Per the story's explicit instruction, this deviation from the epic's wording is NOT raised as a defect. The PRD's AC9 still needs amending to match — PO action, tracked below."
+    - ac: 10
+      note: "Satisfied as structured-field review over TextHandler output, per the documented deviation. Switching to JSONHandler would contradict three architecture documents; the handler correctly stays slog.NewTextHandler. Flagged again for PO awareness: if genuine JSON output is wanted, it is an architecture change warranting its own story."
+    - ac: 12
+      note: "Implemented and correct by inspection, but not exercised by any test or by the manual E2E — firing it requires a full buffer racing shutdown. Counted as covered rather than a gap because the change is a single log line in a branch that story 2.4 already validated; automated proof is deferred to Story 3.3's TestGracefulShutdown."
+
+toolchain_validation:
+  environment: "mqtt2bdd-dev-go-dev container, via docker compose exec from dev/ (2026-07-25)"
+  results:
+    - "gofmt -l . -> clean, no output"
+    - "go vet ./... -> no warnings"
+    - "staticcheck ./... -> no warnings"
+    - "go build ./... -> clean"
+    - "go test -count=1 ./... -> all pass (internal/config, internal/logger; no test files in cmd/mqtt2bdd, internal/database, internal/mqtt)"
+    - "go build -ldflags=\"-X main.Version=0.2.5-qa\" -> binary logs version=0.2.5-qa on both the starting and startup_complete lines (AC7 reproduced independently)"
+
+e2e_validation:
+  note: "Replayed independently rather than accepted from the Dev Agent Record. A separate binary was run inside go-dev, driven with mosquitto_pub, and terminated with a PID-targeted SIGTERM; all four QA-inserted rows were deleted from sensor_metrics afterwards (112 pre-existing rows untouched)."
+  results:
+    - "Happy path at LOG_LEVEL=DEBUG: full startup sequence observed in order — starting -> config_loaded -> mqtt connecting/connected -> database connecting/connected -> pool_stats -> buffer_initialised -> writer_started -> subscribing/subscribed -> startup_complete (AC6)."
+    - "Every one of the 22 emitted lines carried time= (RFC 3339, Z suffix), level=, msg= and exactly one component= (AC1, AC8, AC10). The duplicate-component defect the dev agent self-corrected is confirmed absent."
+    - "mqtt entries inherit broker=tcp://...:1883; database entries inherit host= and database=. No call site repeats them (AC2, AC3)."
+    - "write_success carried topic, payload_size, duration_ms and the SQL query at DEBUG (AC4, AC9)."
+    - "MQTT connect timeout (MQTT_BROKER=192.0.2.1): emits connect_timeout/operation=connect/error=\"context deadline exceeded\", then startup_aborted with failed_component=mqtt, exit 1. This path logged nothing at all before this story — the story's central reliability claim, reproduced (AC5, AC6)."
+    - "Database unreachable (POSTGRES_HOST=192.0.2.1): connect_failed/operation=ping then startup_aborted with failed_component=database, exit 1 (AC5)."
+    - "Config failure (MQTT_BROKER unset): config_load_failed/operation=load_config emitted through the bootstrap logger, component=main, exit 1 — the path that used to be an unstructured log.Fatalf (AC5)."
+    - "Unknown level (LOG_LEVEL=VERBOSE): unknown_log_level WARN carries component=main, closing the one line that previously escaped AC1 (AC1). See FIND-018 for the config_loaded consequence."
+    - "Long topic (403 chars): topic_truncated WARN with original_length=403 and the renamed truncated_topic key; the subsequent write logged under topic= (AC1, AC4)."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "SEC-001 upheld and actively probed, not assumed. config_loaded carries only log_level and buffer_size. The dsn field is never passed to a log call (grep-verified). brokerURL is built from MQTTBroker/MQTTPort only, so credentials cannot reach the mqtt logger's inherited attributes even though NewClient holds cfg. The new failure paths were the real risk — they log pgx errors verbatim — so they were tested directly with POSTGRES_PASSWORD='SuperSecretPassw0rd' and a malformed DSN: the password appears zero times in the output (pgx redacts it; the error surfaces user= and dbname= only). The full-payload DEBUG logging is sensor telemetry on a home-automation broker, already accepted in story 1.6, and no authentication material transits the message path."
+  performance:
+    status: PASS
+    notes: "The hot-path guard is present and correct: c.logger.Enabled(context.Background(), slog.LevelDebug) wraps the per-message DEBUG call, so string(msg.Payload()) — which slog would otherwise evaluate before the level check — never allocates at INFO. This matters more, not less, now that payloads are uncapped. The duration_ms timing needs no guard; time.Now()/time.Since are negligible against a database round-trip. Accepted consequence, restated for the record: at DEBUG, log volume now scales with payload size rather than being capped per message."
+  reliability:
+    status: PASS
+    notes: "Net improvement to operability with no change to control flow. Three failure paths that previously exited 1 in silence or near-silence now emit a structured ERROR first — all three reproduced live. The MQTT context-cancelled branch passes ctx.Err() rather than a fixed string, keeping a future non-deadline cancellation distinguishable. Out-of-scope boundaries were respected exactly: FIND-016 untouched, FIND-010's log line enriched without adding the retry loop, dbWriterLoop and insertWithRetry still free of logging and of a *slog.Logger parameter per story 2.3.1, and the msgChan-never-closed invariant from FIND-014 intact."
+  maintainability:
+    status: PASS
+    notes: "This is the strongest part of the story. Component names are exported constants and WithComponent is the single choke point for attaching them, so the value cannot drift. Binding component/broker/host/database once at construction and deleting the eight per-call duplicates removes a whole class of copy-paste inconsistency — and the slog double-emit bug that came with it. Comments explain why (the level guard, the string() conversion, failed_component vs component, the untagged baseLogger) rather than what. Godoc on every new exported symbol, three-block imports, receiver c, no magic numbers. The one blemish is documentary, not structural: see FIND-017."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "FIND-017: promote the Log Field Vocabulary out of the story into docs/architecture/, folding in the four *_failed event values added during implementation, so the next story that touches a log line has a live reference instead of a closed story's Dev Notes."
+      refs: ["docs/stories/2.5.story.md:164-195", "docs/architecture/error-handling-strategy.md"]
+    - action: "FIND-018: log the effective log level on config_loaded, not just the requested one, so a grep of that single event cannot mislead."
+      refs: ["cmd/mqtt2bdd/main.go:84", "internal/logger/logger.go:27-43"]
+    - action: "FIND-019: revisit the duration_ms unit at architecture level before more timing fields are added, so sub-millisecond operations do not all report 0."
+      refs: ["internal/database/queries.go:29-31", "docs/architecture/error-handling-strategy.md#logging-standards-for-errors"]
+    - action: "PO housekeeping: amend the PRD's Epic 2 AC9 to drop '(truncated)' and AC10 to say 'structured field consistency' rather than 'JSON structure'. Both deviations were decided deliberately and documented in the story, but the PRD still contradicts the shipped behaviour and will mislead whoever reads it next."
+      refs: ["docs/prd.md", "docs/stories/2.5.story.md:133-156"]
+    - action: "Consider dropping the `query` attribute from the per-message write_success line. It is a compile-time constant, so DEBUG runs append ~110 bytes of identical text per message for no diagnostic gain. AC9's 'SQL queries in debug mode' would be equally served by logging the statement once at startup. Deliberate choice to keep it is fine — noting the cost, not prescribing a change."
+      refs: ["internal/database/queries.go:59"]
+    - action: "Story 3.3 (carried): TestGracefulShutdown should assert the message_dropped WARN alongside the flush and timeout paths, retiring the last inspection-only AC in this story."
+      refs: ["cmd/mqtt2bdd/main.go:136-138", "internal/database/integration_test.go"]
+    - action: "FIND-010 (carried, still open): reconnectLoop re-subscribes after reconnect but a failed re-subscription only logs an ERROR and returns, leaving the client connected yet silently receiving nothing. This story improved the log line as instructed; the retry is still owed."
+      refs: ["internal/mqtt/client.go:166-170"]
+    - action: "FIND-016 (carried, still open): the drain path's context.Background() and bare time.Sleep leave the 30s shutdown bound best-effort against a hung database."
+      refs: ["cmd/mqtt2bdd/main.go:34-43"]
