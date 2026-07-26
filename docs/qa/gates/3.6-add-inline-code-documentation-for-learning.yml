@@ -1,0 +1,107 @@
+schema: 1
+story: '3.6'
+story_title: 'Add Inline Code Documentation for Learning'
+gate: PASS
+status_reason: >-
+  All 14 ACs (11 verbatim PRD ACs + AC12/FIND-020, AC13/FIND-019, AC14) independently re-verified
+  against the live repository, not accepted from the Dev Agent Record. The full toolchain
+  (gofmt/go vet/staticcheck/go build/go test) re-run clean; the duration_ms -> duration_us rename
+  confirmed complete (zero remaining duration_ms occurrences, three duration_us call sites); the
+  Domain Fields table re-derived independently from a fresh grep of every logger call site with no
+  twelfth undocumented key found; the phantom Ping(ctx) entry confirmed replaced with real,
+  verified methods; go doc output confirmed sensible for cmd/mqtt2bdd, internal/database, and
+  internal/mqtt. No blocking issue found.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-07-26T11:34:48Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 100
+expires: '2026-08-09T00:00:00Z'
+
+evidence:
+  tests_reviewed: 5
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      AC9 satisfied by pre-existing Dockerfile/security.md coverage (Story 3.1), re-confirmed
+      current; no Go-source duplication manufactured; git diff confirms security.md untouched by
+      this story.
+  performance:
+    status: PASS
+    notes: >-
+      duration_us rename is a resolution-only observability improvement (int64 Microseconds()
+      exactly parallel to Milliseconds()); no new allocation, no behavior change; removes a
+      sub-millisecond-write blind spot (duration_ms=0).
+  reliability:
+    status: PASS
+    notes: >-
+      One genuine code change (field rename) verified to break no existing test; full test suite
+      green across all 5 packages before and after.
+  maintainability:
+    status: PASS
+    notes: >-
+      Comments consistently explain why/pattern/cross-reference, never what, per
+      coding-standards.md; Domain Fields table and components.md Key Interfaces list now match
+      live source exactly; no scope creep beyond the 8 files in File Locations.
+
+recommendations:
+  immediate: []
+  future:
+    - action: >-
+        REL-001 (Story 3.3, non-blocking): revisit whether a permanently-failing re-subscribe
+        should demote mqtt_status away from "connected" in healthCheckLoop, if the project ever
+        gains ACL-capable broker authentication. Not actionable today.
+      refs: ['cmd/mqtt2bdd/main.go', 'internal/mqtt/client.go']
+    - action: >-
+        TEST-001 (Story 3.3, non-blocking): independently re-exercise AC9's negative path (a
+        deliberately broken scenario causing non-zero exit) the next time
+        test/run-integration-tests.sh is touched.
+      refs: ['test/run-integration-tests.sh']
+    - action: >-
+        DOC-001 (Story 3.5, non-blocking): small wording clarity fix to the README's Architecture
+        diagram annotation, next time README.md is touched.
+      refs: ['README.md']
+    - action: >-
+        docs/prd.md:419 and docs/architecture.md (the superseded monolithic architecture doc)
+        still literally reference duration_ms and the phantom Ping(ctx) entry. Per this project's
+        own convention (PRD realigned only on contradicted labels; docs/architecture.md superseded
+        by the sharded docs/architecture/ directory and not maintained since creation), this is not
+        a defect Story 3.6 should fix, but is noted for a future maintainer.
+      refs: ['docs/prd.md', 'docs/architecture.md']
+
+carry_forward_register:
+  resolved:
+    - { id: 'FIND-010', originating_gate: '2.2', resolved_in: '3.3' }
+    - { id: 'FIND-016', originating_gate: 'pre-3.3', resolved_in: '3.3' }
+    - { id: 'FIND-019', originating_gate: '2.5', resolved_in: '3.6' }
+    - { id: 'FIND-020', originating_gate: '2.6', resolved_in: '3.6' }
+    - { id: 'FIND-021', originating_gate: '2.6', resolved_in: '3.4' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
+    - { id: 'TEST-001', originating_gate: '3.3', reason: 'Negative-path re-exercise deferred to next touch of the integration test script' }
+    - { id: 'DOC-001', originating_gate: '3.5', reason: 'Low-severity README wording nit' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Deliberately deferred, accepted risk recorded in security.md; not a story' }
+  register_status: 'clean and internally consistent as of the final story in the PRD backlog'
+
+history:
+  - at: '2026-07-26T11:34:48Z'
+    gate: PASS
+    note: >-
+      Final story of the PRD backlog. All 14 ACs independently re-verified; toolchain clean;
+      FIND-019/FIND-020 confirmed fully and correctly closed; carry-forward register confirmed
+      clean across all 21 gate files.
