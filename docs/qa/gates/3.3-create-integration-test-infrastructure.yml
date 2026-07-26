@@ -1,0 +1,125 @@
+schema: 1
+story: "3.3"
+story_title: "Create Integration Test Infrastructure"
+gate: PASS
+status_reason: "All 15 ACs verified, independently re-run twice end to end in this review: the isolated test stack builds and tears down cleanly, and both PO-mandated production fixes (FIND-010 re-subscription retry, FIND-016 bounded shutdown drain) plus the new TestGracefulShutdown (message_dropped/healthWG) pass against real broker/database outages, not mocks. No blocking issue found; one new low-severity design question is tracked (REL-001), not blocking."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-26T06:47:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "REL-001"
+    severity: low
+    finding: "healthCheckLoop reports mqtt_status=connected based solely on mqttClient.IsConnected(), which cannot distinguish 'properly subscribed' from 'connected but permanently unsubscribed' if a resubscribe were ever to fail permanently rather than transiently. AC12's retry-forever fix correctly handles the transient case (a broker restart) that is the only failure mode this project can currently reproduce (no broker ACLs; broker authentication is a separately deferred item). Flagged explicitly by the PO at validation (Ruling 1) as a real, unresolved design question, deliberately not folded into an AC to avoid rewriting a six-gate-old ruling. Not live today — no mechanism in this project makes a Subscribe call permanently and deterministically fail."
+    suggested_action: "If the project ever gains ACL-capable broker authentication, revisit whether a permanently-failing re-subscribe should demote mqtt_status away from connected in healthCheckLoop. No action needed today."
+    suggested_owner: sm
+  - id: "TEST-001"
+    severity: low
+    finding: "AC9's negative path (test/run-integration-tests.sh exiting non-zero on a deliberately broken scenario) was verified by the Dev Agent Record's account (POSTGRES_DB pointed at a nonexistent database, script correctly failed the smoke-test assertion and exited 1) but was not independently re-exercised in this review. The happy path was independently re-run twice, both exit 0."
+    suggested_action: "No action required — accepted on the Dev's documented account, consistent with the review standard applied to Story 3.2's AC9-equivalent checks. Worth a first-hand re-check only if this script is next touched for an unrelated reason."
+    suggested_owner: dev
+
+resolved_issues:
+  - id: "FIND-010"
+    severity: high
+    finding: "internal/mqtt/client.go's reconnectLoop attempted Subscribe exactly once after a successful reconnect and returned regardless of outcome, leaving IsConnected()==true with no live subscription — the pipeline went silently deaf while health_check kept reporting mqtt_status=connected. First raised gate 2.2, carried through six subsequent gate closures, homed on this story (AC12) by gate 3.2's carry-forward register."
+    resolution: "reconnectLoop now retries Subscribe every defaultMQTTReconnectInterval until it succeeds or c.shutdown closes, firing resubscribe_failed on every failed attempt (not just the first). Proven two ways, both re-run live in this review: internal/mqtt/client_test.go's fake-Paho-client unit tests (TestReconnectLoop_RetriesResubscribeUntilSuccess, TestReconnectLoop_ResubscribeStopsOnShutdown, ~0.03s total), and cmd/mqtt2bdd/mqtt_reconnect_integration_test.go's TestMQTTReconnect, which genuinely stops and restarts mqtt2bdd-test-mosquitto (not a mock) and confirms a message published after the restart is received and persisted. PASS twice in this review (10.46s, 10.68s)."
+    refs: ["internal/mqtt/client.go:170-189", "internal/mqtt/client_test.go", "cmd/mqtt2bdd/mqtt_reconnect_integration_test.go"]
+  - id: "FIND-016"
+    severity: medium
+    finding: "cmd/mqtt2bdd/main.go's shutdown drain path used context.Background() and a bare time.Sleep, so a database outage during shutdown could run the drain past defaultShutdownTimeout while dbClient.Close() tore down the pool underneath it. First raised gate 2.4, homed on this story (AC13) by gate 3.2's carry-forward register."
+    resolution: "A shutdownCtx is created cheaply via context.WithCancel at startup and armed via time.AfterFunc(defaultShutdownTimeout, shutdownCancel) at the exact moment close(done) fires, so it shares the same 30s budget main's own select already races from the same starting instant. insertWithRetry now takes a ctx (steady state passes context.Background(), unbounded, unchanged invariant from 1.8/2.3; the drain branch passes shutdownCtx). Proven by cmd/mqtt2bdd/shutdown_integration_test.go's TestShutdownDrainBounded against a genuinely stopped test-postgres, re-run live twice in this review (36.59s, 36.55s): process exits within the bound, flush_timeout -> shutdown_complete, exit 0."
+    refs: ["cmd/mqtt2bdd/main.go:20-95,226-303", "cmd/mqtt2bdd/shutdown_integration_test.go"]
+  - id: "message_dropped-healthWG-test-debt"
+    severity: low
+    finding: "The message_dropped WARN (main.go's producer-blocked-at-shutdown branch) and healthWG.Wait()'s teardown-ordering placement had zero automated coverage; both relied on manual E2E or code inspection. Deferred verbatim from gate 2.5, restated in gates 2.6, 3.1, 3.2."
+    resolution: "New TestGracefulShutdown (cmd/mqtt2bdd/shutdown_integration_test.go) stops test-postgres before a fast burst against BUFFER_SIZE=2, deterministically filling the buffer and catching a producer mid-send at SIGTERM; asserts message_dropped fires with the correct topic=, and that no health_check line's timestamp is later than shutdown_complete's. Re-run live twice in this review (35.91s, 35.96s), both PASS, exit 0, message_dropped topic matched the published topic both times, zero health_check lines observed (expected given the 60s interval vastly exceeds the ~36s test runtime)."
+    refs: ["cmd/mqtt2bdd/main.go:255-269,308", "cmd/mqtt2bdd/shutdown_integration_test.go"]
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 2 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "REL-001: mqtt_status cannot currently distinguish a transient (retried-and-recovers) resubscribe failure from a hypothetical permanent one. Not live — no mechanism in this project makes Subscribe fail permanently and deterministically today."
+      - "TEST-001: AC9's negative-path (non-zero exit on a broken scenario) was accepted on the Dev's documented account rather than independently re-exercised in this review."
+
+quality_score: 80
+expires: "2026-08-09T00:00:00Z"
+
+evidence:
+  tests_reviewed: 9
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "GIVEN test/docker-compose.yml, WHEN read, THEN three services (postgres, mosquitto, mqtt2bdd) are declared with container_name mqtt2bdd-test-postgres/mqtt2bdd-test-mosquitto/mqtt2bdd-test-mqtt2bdd. Verified by reading the shipped file and observing docker compose ps naming during this review's two live runs."
+    - ac: 2
+      note: "GIVEN the mqtt2bdd-test- prefix on all three container_name values, WHEN docker ps is read, THEN clear separation from dev/prod. Verified live."
+    - ac: 3
+      note: "GIVEN the postgres service's tmpfs mount (not a named volume), WHEN the stack is torn down, THEN no data survives. Verified by reading the compose file and by docker volume ls showing no test volume after both live runs."
+    - ac: 4
+      note: "GIVEN the parameterised ${POSTGRES_TEST_HOST_PORT:-5433}/${MQTT_TEST_HOST_PORT:-1884} bindings, WHEN the stack runs alongside dev, THEN no collision. Verified live: dev stack (5432/1883) stayed Up and untouched throughout both full runs in this review."
+    - ac: 5
+      note: "GIVEN test/init-db/01-schema.sql, WHEN Postgres initialises, THEN sensor_metrics exists matching database-schema.md. Verified by reading the file (byte-identical to dev/init-db/01-schema.sql apart from the header comment) and by the smoke test's successful insert/read-back in both live runs."
+    - ac: 6
+      note: "GIVEN the mqtt2bdd service's build block (context: .., dockerfile: Dockerfile), WHEN built, THEN it builds from the unmodified root production Dockerfile. Verified live: both runs rebuilt and reached healthy. The Dockerfile-reuse-vs-test-stage deviation is measured (8.8s/9.2s rebuild times), not asserted."
+    - ac: 7
+      note: "GIVEN test/run-integration-tests.sh, WHEN run, THEN it starts the stack, waits for health, smoke-tests, runs the Go suite, tears down. Verified by two independent full runs in this review, both exit 0."
+    - ac: 8
+      note: "GIVEN the running stack, WHEN a message is published (before and after a broker restart), THEN it is received and persisted. Verified via TestMQTTReconnect and the compose-managed smoke test, both passing in both of this review's runs."
+    - ac: 9
+      note: "GIVEN the happy path, WHEN the script completes successfully, THEN exit 0 -- independently re-verified twice in this review. The negative (deliberately-broken) path was NOT re-exercised in this review; accepted on the Dev Agent Record's documented account (POSTGRES_DB pointed at a nonexistent database, script correctly failed and exited 1). See TEST-001."
+    - ac: 10
+      note: "GIVEN a full run, WHEN it completes, THEN no mqtt2bdd-test-* container/network/volume remains and the dev stack is untouched. Verified twice, independently, via docker ps -a / docker network ls / docker volume ls filtered for mqtt2bdd-test (empty both times) and docker ps showing mqtt2bdd-dev-* Up throughout."
+    - ac: 11
+      note: "GIVEN the toolchain, WHEN gofmt/go vet/staticcheck/go build/go test are run (both with and without -tags=integration) via docker compose exec go-dev, THEN all are clean. Independently re-run in this review; all clean."
+    - ac: 12
+      note: "GIVEN a running app subscribed to #, WHEN mqtt2bdd-test-mosquitto is stopped and restarted, THEN a post-restart message is still received and persisted (FIND-010 fix). Verified twice via TestMQTTReconnect (10.46s, 10.68s) plus the internal/mqtt unit tests (~0.03s), all re-run directly in this review."
+    - ac: 13
+      note: "GIVEN a buffered message and test-postgres stopped mid-drain, WHEN SIGTERM is sent, THEN the process exits within defaultShutdownTimeout plus margin, not indefinitely (FIND-016 fix). Verified twice via TestShutdownDrainBounded (36.59s, 36.55s), re-run directly in this review."
+    - ac: 14
+      note: "GIVEN a full buffer and a stuck writer, WHEN SIGTERM arrives mid-send, THEN message_dropped fires with the correct topic= and no health_check line postdates shutdown_complete. Verified twice via TestGracefulShutdown (35.91s, 35.96s), re-run directly in this review."
+    - ac: 15
+      note: "GIVEN the three enumerated architecture edits, WHEN the shard files are read, THEN all are present, factually correct and bounded (container rename, ports-published bullet, staleness annotation on the Integration Test Script snippet; one added source-tree.md line). Verified by reading the live files in this review. tech-stack.md correctly untouched; no docs/architecture.md or docs/prd.md edit."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new exposure. test/mosquitto/mosquitto.conf carries the same allow_anonymous true posture already accepted for dev/ (unchanged, not new). test_password is a throwaway credential for a disposable, tmpfs-backed, host-only stack, matching the dev/prod convention. The Docker-socket mount into the throwaway test-runner container is narrowly scoped to the test harness itself (needed for the AC12/AC13 tests' own docker stop/start calls) and grants no new capability to the shipped mqtt2bdd application or image. Broker-authentication deferral remains correctly out of scope, per Story 3.2's gate."
+  performance:
+    status: PASS
+    notes: "No run-time regression: the new context.WithTimeout wrapping each insert attempt is inert during normal operation and only becomes observable on the drain path it exists to bound. Health-check intervals (5s/10s) are appropriately faster than prod's, matching the stack's disposable nature. Dockerfile-reuse decision is backed by measured build times (8.8s/9.2s), not estimated, and both of this review's full runs completed in a few minutes end to end."
+  reliability:
+    status: PASS
+    notes: "FIND-010 and FIND-016, two real production bugs each carried across six prior gate closures, are now fixed and proven against real broker/database outages rather than mocks -- re-verified live, twice, in this review. TestGracefulShutdown closes the last piece of test debt (message_dropped/healthWG ordering) deferred since gate 2.5. The one open design question (REL-001) is a genuine gap but not live today and is correctly not blocking."
+  maintainability:
+    status: PASS
+    notes: "Test helpers are well-factored (integration_helpers_test.go), commented where non-obvious, and match the story's own Dev Notes reference content verbatim by diff. The architecture reconciliation (AC15) keeps the sharded docs describing the artefact that actually shipped, following the same facts-only discipline Stories 3.1/3.2 established. The carry-forward register is accurate and none of Stories 3.4/3.6's homed findings were pulled into this diff (confirmed via git show --stat: no logging-standards.md, no components.md change)."
+
+testability:
+  controllability: "Good. The test stack is fully parameterised (host ports, credentials) and its ephemeral tmpfs storage guarantees a clean slate every run regardless of how the previous run ended. Real broker/database restarts are driven programmatically from inside the Go test binary via the mounted Docker socket, giving deterministic control over the exact failure conditions AC12/AC13 need."
+  observability: "Good. Every AC leaves a machine-readable trace: structured stdout log lines from the subprocess under test (scanned and asserted on directly), docker compose ps health status, and direct SQL queries against sensor_metrics for row-level verification. Nothing in this review had to be taken on trust."
+  debuggability: "Adequate. Subprocess stdout is captured to both an in-memory buffer (for assertions) and os.Stderr (for a human reading test output), and t.Cleanup ensures a leftover subprocess is killed even on a failed assertion. The throwaway golang:1.23-alpine test-runner container retains a full shell and toolchain, unlike the runtime image, so a failed run can be investigated interactively if needed."
+
+cleanup_verification:
+  note: "This review ran the full test/run-integration-tests.sh script twice, end to end, deliberately to obtain independent first-hand evidence beyond the Dev's own account. Both runs' cleanup was verified by direct inspection, not assumed from the script's own trap."
+  results:
+    - "docker ps -a --filter name=mqtt2bdd-test: empty after both runs."
+    - "docker network ls --filter name=mqtt2bdd-test: empty after both runs (mqtt2bdd-test-network removed each time)."
+    - "docker volume ls --filter name=mqtt2bdd-test: empty after both runs (tmpfs leaves nothing to list, by design)."
+    - "docker ps confirms mqtt2bdd-dev-go-dev, mqtt2bdd-dev-mosquitto, mqtt2bdd-dev-postgres all Up throughout both runs, never stopped or restarted."
+    - "git status: clean before and after this review; no source file modified by this review (only this story's QA Results section and this gate file were written, both this review's own sanctioned outputs)."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "REL-001: if the project ever gains ACL-capable broker authentication, revisit whether a permanently-failing re-subscribe should demote mqtt_status away from connected in healthCheckLoop. Not actionable today -- no mechanism currently makes Subscribe fail permanently."
+      refs: ["internal/mqtt/client.go", "cmd/mqtt2bdd/main.go"]
+    - action: "TEST-001: independently re-exercise AC9's negative path (a deliberately broken scenario causing non-zero exit) the next time test/run-integration-tests.sh is touched, rather than relying solely on the Dev Agent Record's account."
+      refs: ["test/run-integration-tests.sh"]
+    - action: "Carried, still open, unchanged by this story: FIND-020 and the components.md Ping(ctx) entry (Story 3.6); FIND-019 (Story 3.6); FIND-021 and the EffectiveLevel/isKnownLevel nit (Story 3.4); broker authentication (deferred, no approved home). Confirmed none was pulled into this story's diff."
+      refs: ["docs/qa/gates/3.2-create-production-docker-compose-configuration.yml", "docs/stories/3.3.story.md#carry-forward-findings-from-qa-gates"]
