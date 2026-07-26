@@ -1,0 +1,82 @@
+schema: 1
+story: "3.5"
+story_title: "Write Educational README Documentation"
+gate: PASS
+status_reason: "All 15 ACs independently re-verified against the live repository — the Configuration table matches config.go field-for-field, the architecture diagram/function names match main.go exactly, Project Structure matches a live find, and the story's central tracked defect (the hyphenated docker-compose invocation) is confirmed fully fixed with zero remaining bare-command matches. One low-severity documentation clarity nit found, non-blocking."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-26T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "DOC-001"
+    severity: low
+    finding: "The Architecture section's ASCII-diagram annotation reads, taken literally, as if main() starts both diagram boxes explicitly labeled \"goroutine\" above it (the MQTT Client/Paho callback box and the DB Writer box): \"Main goroutine: ... starts the two goroutines above plus a third (Health Check, below)\". The prose immediately following the fenced code block correctly states only dbWriterLoop and healthCheckLoop are started from main(), with the Paho callback goroutine explicitly not one of the application's own goroutines — the two statements are in tension within the same section. Not a factual error in the shipped facts (the correct account follows two sentences later, and cmd/mqtt2bdd/main.go was independently re-verified to match the correct prose), but could momentarily confuse the Go-beginner reader AC15 targets."
+    suggested_action: "Reword the diagram annotation, e.g. \"starts the DB Writer goroutine below plus a third (Health Check); the MQTT Client box above is the Paho library's own callback goroutine, not spawned directly by main()\" — a small wording fix, next time README.md is touched."
+    suggested_owner: dev
+
+quality_score: 95
+expires: "2026-08-09T00:00:00Z"
+
+evidence:
+  tests_reviewed: 0 # Documentation-only story — no automated test applies. The story's own Task 14 manual review is the acceptance test for AC15; this review independently re-performed it rather than accepting the Dev's account.
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "GIVEN README.md, WHEN read end to end, THEN it contains all 12 named sections (Overview, Features, Architecture, Project Structure, Prerequisites, Quick Start, Configuration, Development, Production Deployment, Testing, Troubleshooting, Learning Resources) in this exact order. Verified by reading the full file."
+    - ac: 2
+      note: "Overview paragraph independently checked against docs/architecture/components.md's MQTT-client component description — wildcard subscription, sensor_metrics table, Grafana as downstream consumer, all accurate."
+    - ac: 3
+      note: "Architecture diagram and narrative independently checked against cmd/mqtt2bdd/main.go in full: three application goroutines (main, dbWriterLoop, healthCheckLoop) plus the Paho-managed callback, one buffered channel (BUFFER_SIZE), backpressure via the blocking select in the message handler, health-check observe-only behaviour. All confirmed accurate. See DOC-001 for a non-blocking wording nit in the diagram's own annotation."
+    - ac: 4
+      note: "Project Structure independently checked against a live `find . -maxdepth 3`: no pkg/, scripts/, Makefile, .github/, or LICENSE (all confirmed genuinely absent); module path github.com/spydemon/mqtt2bdd confirmed against go.mod:1, never the stale github.com/username/mqtt2bdd (grepped, zero matches)."
+    - ac: 5
+      note: "Prerequisites section states Docker/Docker Compose as the only hard requirement and Go 1.23+ as optional, matching docs/architecture/tech-stack.md's version figures (Go ~1.23.6, Compose ~5.1.2)."
+    - ac: 6
+      note: "Quick Start commands independently checked against dev/docker-compose.yml: service names (postgres, mosquitto, go-dev) and the dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient ./cmd/mqtt2bdd command (line 38) match exactly. This is the story's central tracked defect (gate 3.2's carry-forward finding, the legacy hyphenated docker-compose up --build) — grepped the finished README for the literal string 'docker-compose ' (trailing space): zero command-invocation matches, confirming the fix is real and complete."
+    - ac: 7
+      note: "Configuration table independently re-derived from internal/config/config.go's LoadConfig() (11 os.Getenv call sites, no others) — matches the README's table exactly, field for field. LOG_LEVEL behaviour cross-checked against internal/logger/logger.go:27-38,88-95 (case-insensitive, empty defaults to INFO silently, unknown non-empty also defaults to INFO plus a WARN); the README correctly states the three real levels rather than repeating .env.prod.example's own stale four-level comment. The three Compose-only variables are kept in a visibly separate table, as instructed."
+    - ac: 8
+      note: "Development section commands independently checked: `docker compose exec go-dev go test ./...`, `gofmt -l .`, `go vet ./...`, `staticcheck ./...`, all from dev/, never bare on the host. .vscode/launch.json confirmed to define the 'Attach to Go in Docker' config described. Build-with-version-injection content correctly folded in from the prior README's standalone Build section."
+    - ac: 9
+      note: "Production Deployment content independently re-checked against docker-compose.prod.yml and .env.prod.example: stop_grace_period: 30s (line 113) and defaultShutdownTimeout = 30 * time.Second (main.go:25) correspondence stated explicitly; the non-self-healing health-check note matches the Compose file's own comment (lines 124-126) in substance. Absorbed from Story 3.2's seed essentially unchanged, as scoped."
+    - ac: 10
+      note: "Testing section distinguishes unit (`docker compose exec go-dev go test ./...` / `-cover`) from integration (`./test/run-integration-tests.sh`, run from the repository root) — independently checked test/run-integration-tests.sh's own header comment confirming the repo-root invocation and its build/wait/smoke-test/integration-suite/teardown sequence."
+    - ac: 11
+      note: "All Troubleshooting entries trace to a real, code-grounded failure path (config.LoadConfig() error semantics, docker-compose.prod.yml's own restart-vs-unhealthy comment, buffer_full WARN semantics with correct 1000-message/10-minute-at-100/min arithmetic). No invented scenario found."
+    - ac: 12
+      note: "All 12 Learning Resources links independently spot-checked as official/canonical (go.dev, pkg.go.dev, mqtt.org, OASIS, postgresql.org, docs.docker.com); each is annotated with a project-specific sentence, not a bare list, and rendered as markdown links (not bare URLs) in the shipped README."
+    - ac: 13
+      note: "Only a Go-version badge is present (shields.io, Go-1.23%2B). No license badge (no LICENSE file exists — confirmed by the same live find) and no CI badge (.github/ does not exist) — both omissions are correctly justified rather than silently dropped or guessed."
+    - ac: 14
+      note: "34 fence markers (17 balanced pairs) counted directly in the file; all appropriately tagged (text for the diagram/tree, bash for every command block). No unlabeled fence where a language applies."
+    - ac: 15
+      note: "Manual review independently re-performed rather than accepted from the Dev Agent Record: Quick Start commands verified against real service names, diagram verified against main.go's real goroutines/function names, Configuration table verified field-for-field against config.go, and a fresh grep confirming zero bare docker-compose invocations remain. One low-severity wording nit found (DOC-001); no factual defect."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new security surface — documentation only. Broker-authentication accepted-risk posture is described factually (Security subsection, Configuration table) and not re-litigated, consistent with docs/architecture/security.md:228-252."
+  performance:
+    status: PASS
+    notes: "N/A — no code changed."
+  reliability:
+    status: PASS
+    notes: "N/A — no code changed. Documentation accurately describes the application's real reliability behaviours (retry, graceful shutdown, health check) without overstating them."
+  maintainability:
+    status: PASS
+    notes: "DOC-001 (low severity, non-blocking): one internally inconsistent sentence in the Architecture diagram's own annotation, clarified two sentences later — worth a small future wording fix for readability, but does not affect the correctness of the shipped documentation."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Reword the Architecture diagram's annotation sentence (\"starts the two goroutines above plus a third\") so it does not read as main() spawning the Paho callback goroutine, which the very next paragraph correctly says it does not."
+      refs: ["README.md:71-73"]
+
+history:
+  - at: "2026-07-26T00:00:00Z"
+    gate: PASS
+    note: "Initial review. All 15 ACs independently re-verified against the live repository; the story's central tracked defect (hyphenated docker-compose invocation) confirmed fully fixed. One low-severity documentation clarity nit (DOC-001) found, non-blocking."
