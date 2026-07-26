@@ -1,0 +1,94 @@
+schema: 1
+story: "3.4"
+story_title: "Write Comprehensive Unit Tests"
+gate: PASS
+status_reason: "All 12 ACs (11 verbatim PRD ACs + AC12/FIND-021) independently verified against the actual diff, not accepted from the Dev Agent Record: every claimed test exists, compiles, and passes; the full toolchain was re-run clean; coverage percentages match exactly; AC12/FIND-021's writeAgeSeconds extraction is byte-for-byte the fix gate 2.6 prescribed. No blocking issue found."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-07-26T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+resolved_issues:
+  - id: "FIND-021"
+    severity: low
+    finding: "healthCheckLoop's -1 age sentinel (cmd/mqtt2bdd/main.go) was unreachable from a test, proven only by manual replay. First raised gate 2.6, restated unchanged in gates 3.1, 3.2, 3.3's carry-forward registers, each explicitly homing it on this story as AC12."
+    resolution: "Extracted writeAgeSeconds(lastWrite, now time.Time) int64 at cmd/mqtt2bdd/main.go:118-127, placed alongside the existing connectionStatus/bufferUtilizationPercent pure-helper pair, exactly as gate 2.6 prescribed. healthCheckLoop's ticker branch now reads lastWriteAgeSeconds := writeAgeSeconds(dbClient.LastWriteAt(), time.Now()) — no other line in the function changed, confirmed by reading it in full. TestWriteAgeSeconds (main_test.go) table-tests all three cases the story's own Dev Notes specified (zero time -> -1, 48s ago -> 48, this instant -> 0), re-run live in this review and passing."
+    refs: ["cmd/mqtt2bdd/main.go:118-127,152", "cmd/mqtt2bdd/main_test.go:52-72"]
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 100
+expires: "2026-08-09T00:00:00Z"
+
+evidence:
+  tests_reviewed: 24
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    ac_gaps: []
+  ac_notes:
+    - ac: 1
+      note: "GIVEN all four core packages (config, logger, mqtt, database), WHEN go test -v ./... is run, THEN every package has a test file with passing tests. Verified live in this review."
+    - ac: 2
+      note: "internal/config/config_test.go unchanged this story — already table-driven (TestLoadConfig, 12 subtests), confirmed sufficient per the Dev's honest-gap analysis and re-confirmed by this review's own read."
+    - ac: 3
+      note: "GIVEN a fakePahoClient scripted to succeed, fail, or block, WHEN Connect/Subscribe/IsConnected/Disconnect are called, THEN each returns the expected result. 7 new tests (TestConnect_Success/_Failure/_ContextCancelled, TestSubscribe_Success/_Failure, TestIsConnected, TestDisconnect_ClosesShutdownExactlyOnce), all re-run live and PASS. Reconnection logic remains covered by the two pre-existing Story 3.3 tests, left untouched and still passing."
+    - ac: 4
+      note: "GIVEN a DSN with a raw space, WHEN Connect is called, THEN pgxpool.ParseConfig rejects it with no network call (TestConnect_InvalidDSN, re-run, PASS). GIVEN a closed net.Listener's reserved port, WHEN Connect is called with a bounded context, THEN pool.Ping fails fast with connection-refused (TestConnect_UnreachableHost, re-run, PASS, 0.01s, no live database). INSERT operations remain covered by the pre-existing integration suite per the story's system-boundary reasoning (pgxpool.Pool is a concrete struct, not fakeable without a real-code refactor this story does not undertake)."
+    - ac: 5
+      note: "Table-driven tests, fixtures, t.Run subtests and a new t.Helper() constructor (newTestClient in internal/mqtt) all confirmed present, the latter closing the one package that previously lacked a test helper."
+    - ac: 6
+      note: "go test -count=1 -v ./... re-run independently in this review: all 5 packages ok, every individual test/subtest PASS."
+    - ac: 7
+      note: "Success and failure scenarios confirmed present in every new test group across all four touched packages."
+    - ac: 8
+      note: "t.Parallel() usage verified correct per package: config has none (t.Setenv panics under a parallel ancestor, a Go stdlib restriction); logger has it throughout (no shared state); mqtt is correctly mixed (the two Story-3.3 reconnect tests stay sequential since they mutate the shared defaultMQTTReconnectInterval var, all 7 new tests are parallel); database has it on all 4 new tests plus 3 retrofitted TestClientHealthZeroValues subtests. The -v re-run's PAUSE/CONT interleaving for internal/mqtt empirically confirms the sequential-then-parallel split works as designed."
+    - ac: 9
+      note: "go test -cover ./... re-run independently reproduces the Dev Agent Record's exact percentages: cmd/mqtt2bdd 9.2%, internal/config 97.0%, internal/database 43.9%, internal/logger 100.0%, internal/mqtt 67.2%. Coverage is of the right things, not just a high number: internal/logger's 100% closes the previously-unasserted WARN-emission branch; internal/database's jump from a zero-value-only baseline targets Connect's two failure branches specifically, correctly leaving the pool-dependent paths to the integration suite; internal/mqtt's 67.2% now covers every exported method except the already-covered reconnect-driven resubscribe path."
+    - ac: 10
+      note: "Both package-level mock-documentation comments read in full (internal/mqtt above fakeToken/fakePahoClient; internal/database above TestClientHealthZeroValues) — accurate, genuinely different answers to 'how do I test this' for a narrow-interface case versus a concrete-struct case, not boilerplate."
+    - ac: 11
+      note: "gofmt -l ., go vet ./..., staticcheck ./... all re-run independently in this review via docker compose exec go-dev from dev/ — all silent/clean."
+    - ac: 12
+      note: "See resolved_issues: FIND-021. writeAgeSeconds extracted exactly as gate 2.6 prescribed; TestWriteAgeSeconds's 3-case table re-run and PASS."
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new attack surface. The two new database Connect-failure tests target a deliberately-closed local listener or a DSN parse failure — no live service, no network call in the DSN case. No credential material beyond the pre-existing test/localhost placeholders. The one production change (AC12 extraction) is a pure, behaviour-preserving refactor with no security implication."
+  performance:
+    status: PASS
+    notes: "TestConnect_UnreachableHost is the only new test with real-world latency exposure and is bounded by a 5s context.WithTimeout, completing in 0.01s in this review's run — no flakiness observed. writeAgeSeconds is O(1) and pure; its extraction adds no runtime cost to healthCheckLoop."
+  reliability:
+    status: PASS
+    notes: "All new tests are deterministic: no live database or broker required anywhere in this diff, no sleeps beyond the pre-existing Story 3.3 reconnect tests (unchanged), and the closed-listener technique for TestConnect_UnreachableHost is inherently race-free (the port is guaranteed free for the test's own lifetime). Full suite re-run twice in this review (verbose and coverage modes) with identical, stable results both times."
+  maintainability:
+    status: PASS
+    notes: "New test helper (newTestClient) removes struct-literal duplication in internal/mqtt exactly as AC5 asks. Package-level mock-documentation comments (AC10) are genuinely educational, not filler. The EffectiveLevel/isKnownLevel nit was correctly left alone per the story's own non-AC ruling — internal/logger/logger.go verified unchanged, both switch statements intact, avoiding an unrelated production-code refactor in a testing-only story."
+
+testability:
+  controllability: "Excellent. Every new test controls its inputs directly: fakePahoClient's scripted fields (connectErr, connectBlocks, subscribeFailures) for internal/mqtt, and a deliberately-closed net.Listener / a space-containing host string for internal/database's two Connect-failure paths. No test depends on timing beyond the two pre-existing (unchanged) reconnect tests."
+  observability: "Excellent. Every assertion reads a direct return value or an exported accessor (IsConnected(), subscribedTopic, disconnectCalls) — no test relies on log-line scraping for its pass/fail signal, consistent with test-strategy-and-standards.md's 'what not to test' guidance on log content."
+  debuggability: "Good. Test names and doc comments state exactly which branch or line range each test targets (e.g., 'exercises client.go's case <-ctx.Done() branch'), so a future failure is immediately traceable to the specific production code path under test."
+
+carry_forward_register_check:
+  note: "Re-checked against gates 2.6 and 3.3, and against this story's own Dev Notes carry-forward table, before closing this gate."
+  results:
+    - "FIND-021: resolved by this story (AC12), see resolved_issues above."
+    - "EffectiveLevel/isKnownLevel nit: correctly not promoted to an AC; internal/logger/logger.go verified unchanged."
+    - "FIND-020 (logging-standards.md Domain Fields gaps, components.md phantom Ping(ctx) entry): still correctly homed on Story 3.6, untouched by this diff (docs/architecture/ has no changes in this commit)."
+    - "FIND-019 (duration_ms truncation): still correctly homed on Story 3.6, untouched."
+    - "FIND-010, FIND-016, message_dropped/healthWG test debt: correctly stay closed at Story 3.3, not reopened here."
+    - "REL-001, TEST-001 (Story 3.3's own gate): correctly untouched, no action needed today."
+    - "Broker authentication (allow_anonymous true): correctly remains deferred, recorded in docs/architecture/security.md, not touched by this diff."
+    - "'Story 3.7': confirmed not created; every occurrence in docs/stories/3.4.story.md is in the context of stating it does not exist. Epic 3 in docs/prd.md runs 3.1 to 3.6, confirmed by reading the PRD directly."
+
+recommendations:
+  immediate: []
+  future: []
