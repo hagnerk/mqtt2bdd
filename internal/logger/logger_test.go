@@ -41,6 +41,7 @@ func TestNewLogger(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			l := logger.NewLogger(tt.level, &buf)
 			if l == nil {
@@ -68,6 +69,42 @@ func TestNewLogger(t *testing.T) {
 	}
 }
 
+// TestNewLogger_UnknownLevelWarning closes the one real coverage gap in this file:
+// TestNewLogger only asserts which levels are visible after an invalid level is
+// supplied, never that the unknown_log_level WARN itself is emitted (or, for the
+// empty-string case, that it is correctly suppressed).
+func TestNewLogger_UnknownLevelWarning(t *testing.T) {
+	tests := []struct {
+		name      string
+		level     string
+		wantWarn  bool
+		wantLevel string
+	}{
+		{"non-empty unrecognized level warns", "VERBOSE", true, "VERBOSE"},
+		{"empty level does not warn", "", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			logger.NewLogger(tt.level, &buf)
+
+			output := buf.String()
+			gotWarn := strings.Contains(output, "event=unknown_log_level")
+			if gotWarn != tt.wantWarn {
+				t.Errorf("unknown_log_level WARN present=%v, want %v (output=%q)", gotWarn, tt.wantWarn, output)
+			}
+			if tt.wantWarn {
+				wantLevelField := "level=" + tt.wantLevel
+				if !strings.Contains(output, wantLevelField) {
+					t.Errorf("output %q does not contain %q", output, wantLevelField)
+				}
+			}
+		})
+	}
+}
+
 func TestEffectiveLevel(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -84,6 +121,7 @@ func TestEffectiveLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := logger.EffectiveLevel(tt.level); got != tt.want {
 				t.Errorf("EffectiveLevel(%q) = %v, want %v", tt.level, got, tt.want)
 			}
@@ -92,6 +130,7 @@ func TestEffectiveLevel(t *testing.T) {
 }
 
 func TestInitLogger(t *testing.T) {
+	t.Parallel()
 	l := logger.InitLogger("INFO")
 	if l == nil {
 		t.Fatal("InitLogger() returned nil")
@@ -126,6 +165,7 @@ func TestNewLogger_TimestampIsUTC(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			emit(logger.NewLogger("DEBUG", &buf), tt.level)
 
@@ -157,6 +197,7 @@ func TestWithComponent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			emit(logger.WithComponent(logger.NewLogger("DEBUG", &buf), tt.component), tt.level)
 

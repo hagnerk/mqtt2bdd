@@ -115,6 +115,17 @@ func bufferUtilizationPercent(used, capacity int) float64 {
 	return math.Round(p*10) / 10
 }
 
+// writeAgeSeconds returns the number of whole seconds between lastWrite and now, or -1
+// if lastWrite is the zero time.Time (no successful write has happened yet). -1 rather
+// than an omitted field: an absent value would be indistinguishable from a parsing gap,
+// where the sentinel is greppable.
+func writeAgeSeconds(lastWrite, now time.Time) int64 {
+	if lastWrite.IsZero() {
+		return -1
+	}
+	return int64(now.Sub(lastWrite).Seconds())
+}
+
 // healthCheckLoop logs one health status entry per tick until done is closed, plus a
 // separate WARN whenever the buffer sits above its high-water mark. It only reads
 // msgChan's length and capacity: it never sends, receives or closes.
@@ -138,12 +149,7 @@ func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database
 			processed := total - lastWriteCount
 			lastWriteCount = total
 
-			// -1 rather than an omitted field: an absent value would be
-			// indistinguishable from a parsing gap, where the sentinel is greppable.
-			lastWriteAgeSeconds := int64(-1)
-			if lastWriteAt := dbClient.LastWriteAt(); !lastWriteAt.IsZero() {
-				lastWriteAgeSeconds = int64(time.Since(lastWriteAt).Seconds())
-			}
+			lastWriteAgeSeconds := writeAgeSeconds(dbClient.LastWriteAt(), time.Now())
 
 			l.Info("health check",
 				"event", "health_check",

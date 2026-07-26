@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBufferUtilizationPercent(t *testing.T) {
 	tests := []struct {
@@ -41,6 +44,28 @@ func TestConnectionStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := connectionStatus(tt.connected); got != tt.want {
 				t.Errorf("connectionStatus(%v) = %q, want %q", tt.connected, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteAgeSeconds(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		lastWrite time.Time
+		want      int64
+	}{
+		{"never written yet (zero time)", time.Time{}, -1},
+		{"written 48 seconds ago", now.Add(-48 * time.Second), 48},
+		{"written this instant", now, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel() // pure function, no shared state
+			if got := writeAgeSeconds(tt.lastWrite, now); got != tt.want {
+				t.Errorf("writeAgeSeconds(%v, %v) = %d, want %d", tt.lastWrite, now, got, tt.want)
 			}
 		})
 	}
