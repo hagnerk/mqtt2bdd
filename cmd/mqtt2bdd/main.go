@@ -24,6 +24,10 @@ const defaultRetryIntervalOnDatabaseFailure = 10 * time.Second
 // messages to drain before giving up. Aligns with the Docker stop grace period.
 const defaultShutdownTimeout = 30 * time.Second
 
+// defaultInsertAttemptTimeout bounds ONE insert attempt so a hung (not refused)
+// database cannot block a retry loop forever, in either state.
+const defaultInsertAttemptTimeout = 5 * time.Second
+
 // defaultConnectTimeout bounds startup connection attempts so a hung broker or
 // database cannot block startup indefinitely.
 const defaultConnectTimeout = 10 * time.Second
@@ -42,33 +46,46 @@ const bufferHighWaterMarkPercent = 80.0
 var Version = "dev"
 
 // insertWithRetry writes a single message, retrying every defaultRetryIntervalOnDatabaseFailure
-// until the insert succeeds, so no message is lost during a database outage.
-func insertWithRetry(dbClient *database.Client, msg mqtt.Message) {
+// until the insert succeeds, so no message is lost during a database outage. ctx bounds each
+// individual insert attempt (defaultInsertAttemptTimeout) and, when it carries a deadline (the
+// shutdown drain path), also bounds how long the retry loop as a whole may run: steady-state
+// callers pass context.Background(), which never expires, so normal-operation retries stay
+// unbounded — only the drain path's ctx.Done() case is ever reachable.
+func insertWithRetry(ctx context.Context, dbClient *database.Client, msg mqtt.Message) {
 	for {
-		err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
+		attemptCtx, cancel := context.WithTimeout(ctx, defaultInsertAttemptTimeout)
+		err := dbClient.InsertMessage(attemptCtx, msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
+		cancel()
 		if err == nil {
 			return
 		}
-		// error already logged by InsertMessage; hold this message and retry after delay
-		time.Sleep(defaultRetryIntervalOnDatabaseFailure)
+		// error already logged by InsertMessage; hold this message and retry after delay,
+		// unless ctx itself has run out of budget (only possible on the drain path).
+		select {
+		case <-time.After(defaultRetryIntervalOnDatabaseFailure):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
 // dbWriterLoop is the sole consumer of msgChan. It writes each message (retrying until success,
 // ensuring no message is lost during a database outage). On shutdown, done is closed: the loop
 // drains any messages still buffered and then exits. msgChan is never closed, so producers can
-// never panic with "send on closed channel".
-func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <-chan struct{}) {
+// never panic with "send on closed channel". shutdownCtx bounds only the drain branch — the
+// steady-state branch always passes context.Background(), so the "no message lost during a
+// database outage" invariant from Stories 1.8/2.3 is unchanged in normal operation.
+func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <-chan struct{}, shutdownCtx context.Context) {
 	for {
 		select {
 		case msg := <-msgChan:
-			insertWithRetry(dbClient, msg)
+			insertWithRetry(context.Background(), dbClient, msg)
 		case <-done:
 			// Shutdown requested: drain the remaining buffered messages, then exit.
 			for {
 				select {
 				case msg := <-msgChan:
-					insertWithRetry(dbClient, msg)
+					insertWithRetry(shutdownCtx, dbClient, msg)
 				default:
 					return
 				}
@@ -206,13 +223,20 @@ func main() {
 	// producer blocked on a full buffer (stop waiting). msgChan itself is never closed.
 	done := make(chan struct{})
 
+	// shutdownCtx bounds only the drain path (dbWriterLoop's done branch). Created with
+	// WithCancel rather than WithTimeout: WithCancel costs nothing until cancelled, so
+	// creating it here, long before any shutdown signal, is free — a WithTimeout's clock
+	// would start immediately and expire long before a real SIGTERM arrives.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	defer shutdownCancel()
+
 	// DB writer goroutine: sole consumer of msgChan, drains and exits when done is closed.
 	// The WaitGroup lets the shutdown sequence wait for the loop to drain and finish.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		dbWriterLoop(msgChan, dbClient, done)
+		dbWriterLoop(msgChan, dbClient, done, shutdownCtx)
 	}()
 	l.Info("database writer started", "event", "writer_started")
 
@@ -261,6 +285,9 @@ func main() {
 	mqttClient.Disconnect()  // Stop receiving new messages before signalling the writer.
 	buffered := len(msgChan) // No producers remain, so this is the count awaiting flush.
 	close(done)              // Signal the DB writer to drain and exit, and unblock any producer.
+	// Arms the SAME 30s budget the select below already races, from the same starting
+	// instant — the two converge instead of racing independently.
+	time.AfterFunc(defaultShutdownTimeout, shutdownCancel)
 
 	// Wait for the writer to finish, racing the shutdown timeout.
 	drained := make(chan struct{})

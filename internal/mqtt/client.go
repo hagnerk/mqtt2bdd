@@ -16,9 +16,14 @@ import (
 )
 
 const (
-	qos0                         = byte(0)
-	defaultMQTTReconnectInterval = 10 * time.Second
+	qos0 = byte(0)
 )
+
+// defaultMQTTReconnectInterval is the cadence of both the connect retry and the
+// re-subscribe retry in reconnectLoop. A var, not a const: client_test.go shrinks
+// it for the duration of its own test so the retry-until-success unit test does not
+// have to wait out a real 10 s interval per attempt.
+var defaultMQTTReconnectInterval = 10 * time.Second
 
 // Client wraps the Eclipse Paho MQTT client, providing connection management
 // and structured logging.
@@ -164,8 +169,22 @@ func (c *Client) reconnectLoop() {
 
 		c.logger.Info("MQTT reconnected successfully", "event", "reconnected")
 		if c.subscribedHandler != nil {
-			if err := c.Subscribe(c.subscribedTopic, c.subscribedHandler); err != nil {
+			for {
+				err := c.Subscribe(c.subscribedTopic, c.subscribedHandler)
+				if err == nil {
+					break
+				}
+				// Subscribe() itself already logged the generic subscribe_failed (above).
+				// This entry is the distinct, documented resubscribe_failed event — the one
+				// operators filter on to see specifically "a reconnect's subscribe attempt
+				// failed" — now firing on EVERY failed attempt, not just the first.
 				c.logger.Error("MQTT re-subscription failed after reconnect", "event", "resubscribe_failed", "operation", "subscribe", "error", err)
+				select {
+				case <-time.After(defaultMQTTReconnectInterval):
+				case <-c.shutdown:
+					c.logger.Info("MQTT reconnect cancelled, shutting down", "event", "reconnect_cancelled")
+					return
+				}
 			}
 		}
 		return

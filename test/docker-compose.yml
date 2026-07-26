@@ -1,0 +1,84 @@
+# Isolated integration-test stack for mqtt2bdd. Every container is disposable: state never
+# survives `down`, and nothing here is reachable from the dev or prod stacks. Operated by
+# test/run-integration-tests.sh — do not `up` this by hand for a normal development loop.
+name: mqtt2bdd-test
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: mqtt2bdd-test-postgres
+    environment:
+      POSTGRES_DB: mqtt2bdd
+      POSTGRES_USER: mqtt2bdd
+      POSTGRES_PASSWORD: test_password   # throwaway: stack is ephemeral and reachable only on this host
+    volumes:
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+      # tmpfs, not a named volume (AC3): state cannot leak into the next run even if `down -v`
+      # is skipped or the script is killed mid-way. Nothing here is meant to survive a restart.
+      - type: tmpfs
+        target: /var/lib/postgresql/data
+    ports:
+      # Different from dev (5432) and prod's default (5432) — verified free on this host. (AC4)
+      - "${POSTGRES_TEST_HOST_PORT:-5433}:5432"
+    networks:
+      - mqtt2bdd-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mqtt2bdd -d mqtt2bdd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mqtt2bdd-test-mosquitto
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "${MQTT_TEST_HOST_PORT:-1884}:1883"
+    networks:
+      - mqtt2bdd-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 -i healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mqtt2bdd:
+    build:
+      context: ..
+      dockerfile: Dockerfile          # the production Dockerfile (Story 3.1), reused unmodified
+      args:
+        VERSION: test
+    container_name: mqtt2bdd-test-mqtt2bdd
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    environment:
+      MQTT_BROKER: mqtt2bdd-test-mosquitto
+      MQTT_PORT: 1883
+      POSTGRES_HOST: mqtt2bdd-test-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: mqtt2bdd
+      POSTGRES_USER: mqtt2bdd
+      POSTGRES_PASSWORD: test_password
+      LOG_LEVEL: DEBUG
+      BUFFER_SIZE: 1000
+    networks:
+      - mqtt2bdd-test-network
+    healthcheck:
+      # Same probe Story 3.2 verified working: an ESTABLISHED TCP connection to the broker on
+      # $MQTT_PORT is the only honest liveness signal a port-less, log-only application can give.
+      test: ['CMD-SHELL', 'netstat -tn | grep -qE "[0-9.]+:$$MQTT_PORT[[:space:]]+ESTABLISHED"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+networks:
+  mqtt2bdd-test-network:
+    name: mqtt2bdd-test-network
+    driver: bridge

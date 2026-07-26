@@ -60,6 +60,8 @@ mqtt2bdd/
 │   ├── docker-compose.yml                  # Isolated test environment
 │   ├── init-db/
 │   │   └── 01-schema.sql                   # Test database schema
+│   ├── mosquitto/
+│   │   └── mosquitto.conf                  # Test Mosquitto config
 │   └── run-integration-tests.sh            # Integration test runner
 │
 ├── scripts/

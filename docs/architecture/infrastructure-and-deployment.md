@@ -228,11 +228,17 @@ docker exec -it mqtt2bdd-dev-postgres psql -U mqtt2bdd -d mqtt2bdd -c "SELECT * 
 - **Containers:**
   - `mqtt2bdd-test-postgres` (PostgreSQL 15-alpine)
   - `mqtt2bdd-test-mosquitto` (Mosquitto 2.0)
-  - `mqtt2bdd-test-app` (Application under test)
+  - `mqtt2bdd-test-mqtt2bdd` (Application under test)
 - **Network:** `mqtt2bdd-test-network` (isolated, no conflicts with dev)
-- **Ports:** **No ports exposed to host** - containers communicate via internal Docker DNS
-  - PostgreSQL accessible at `mqtt2bdd-test-postgres:5432` (internal)
-  - Mosquitto accessible at `mqtt2bdd-test-mosquitto:1883` (internal)
+- **Ports:** PostgreSQL and Mosquitto ports are published and parameterised, defaulting to
+  `5433` and `1884` to avoid colliding with the dev stack's `5432`/`1883` (Story 3.3, AC4).
+  This is for manual/operator access — `psql`/`mosquitto_pub` against the running stack
+  from the host, or from `go-dev` via `host.docker.internal`. The Go integration test
+  suite itself reaches the stack over the internal network, from a separate throwaway
+  container attached directly to `mqtt2bdd-test-network`, so it never depends on these
+  published ports.
+  - PostgreSQL accessible at `mqtt2bdd-test-postgres:5432` (internal) or `localhost:5433` (host)
+  - Mosquitto accessible at `mqtt2bdd-test-mosquitto:1883` (internal) or `localhost:1884` (host)
 - **Volumes:** Ephemeral (no persistence - fresh state per test run)
 - **Startup:** Automated via `test/run-integration-tests.sh`
 
@@ -264,7 +270,7 @@ services:
     # No ports exposed - internal only
 
   app:
-    container_name: mqtt2bdd-test-app
+    container_name: mqtt2bdd-test-mqtt2bdd
     build:
       context: ..
       dockerfile: Dockerfile
@@ -325,6 +331,12 @@ docker-compose down -v
 
 echo "✅ All integration tests passed!"
 ```
+
+> **Note (Story 3.3):** the `docker-compose exec -T mqtt2bdd-test-app go test ...` invocation above
+> predates this story's actual implementation and would fail against the shipped image — the `mqtt2bdd`
+> service is built from the production `Dockerfile`'s runtime stage, which has no Go toolchain (established
+> as fact when Story 3.1/3.2 closed FIND-024). The real Go integration suite runs in a separate, throwaway
+> `golang:1.23-alpine` container instead, per `test/run-integration-tests.sh`.
 
 **Run Tests:**
 ```bash
