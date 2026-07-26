@@ -1,3 +1,11 @@
+// Package main is the MQTT2BDD application entry point. It reads configuration
+// from the environment, connects to the MQTT broker and PostgreSQL, then
+// decouples message reception from database writes through a buffered channel
+// (the Go CSP pattern): a database-writer goroutine consumes and persists
+// messages while a separate health-check goroutine periodically logs
+// connection and buffer status. On SIGTERM/SIGINT it stops accepting new
+// messages, drains whatever is still buffered (bounded by a shutdown timeout),
+// and only then exits.
 package main
 
 import (
@@ -133,6 +141,11 @@ func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database
 	// A ticker rather than a sleep loop, so the interval does not drift by the cost
 	// of each iteration.
 	ticker := time.NewTicker(defaultHealthCheckInterval)
+	// defer for cleanup: Go's standard idiom for guaranteed release of a resource
+	// on function return, regardless of which exit path is taken (both select
+	// branches below return from this function). Stopping the ticker here means
+	// there is exactly one place that must be kept in sync with the function's
+	// exit points, rather than one release call per return statement.
 	defer ticker.Stop()
 
 	var lastWriteCount uint64

@@ -69,10 +69,15 @@ any `operation` value would be fabricated.
 
 | Area | Fields |
 |------|--------|
-| Message processing (`write_success` / `write_failure` / `write_duplicate`) | `topic`, `payload_size` (bytes), `duration_ms` |
+| Message processing (`write_success` / `write_failure` / `write_duplicate`) | `topic`, `payload_size` (bytes), `duration_us` (microseconds — see note below), `timestamp` (RFC 3339, the message's own timestamp; `write_success`/`write_duplicate` only, distinct from the log entry's own `time`), `query` (the literal SQL text executed; `write_success` only, DEBUG level) |
+| Message reception (`message_received`, DEBUG only) | `topic`, `payload_size` (bytes), `payload` (the raw message payload as a string; DEBUG-only and level-guarded so the conversion cost is not paid at INFO) |
+| Sensor name truncation (`topic_truncated`) | `original_length` (rune-count of the sensor name before truncation), `truncated_topic` (the truncated, last-255-rune sensor name actually used for the insert) |
+| Reconnection (`reconnecting` / `reconnect_failed`) | `attempt` (1-based reconnect attempt counter) |
+| Connection pool (`pool_stats`, DEBUG only) | `acquired_conns`, `idle_conns`, `total_conns`, `max_conns` — the four `pgxpool.Stat()` counters; `max_conns` is the configured ceiling (`internal/database/client.go`'s `maxConns`), not a live count |
+| Log level validation (`unknown_log_level`) | `level` (the raw, unrecognized `LOG_LEVEL` value the operator supplied — distinct from `log_level`/`effective_log_level` below, which are always valid) |
 | Health check (`health_check`) | `mqtt_status`, `db_status`, `db_last_write_age_s` (`-1` ⇒ no successful write since startup), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent`, `processed_last_interval` |
-| Buffer pressure (`buffer_high`) | `buffer_used`, `buffer_capacity`, `buffer_utilization_percent` |
-| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size`, `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
+| Buffer pressure (`buffer_full` / `buffer_high`) | `buffer_size` (`buffer_full` only — the configured channel capacity, `cfg.BufferSize`; also emitted at startup on `config_loaded`, see below — the field is genuinely shared across both areas, not mis-filed in one), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent` (`buffer_high` only) |
+| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size` (`config_loaded` — same field as the `buffer_full` row above), `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
 
 `failed_component` is deliberately not `component`: an entry naming a culprit is still emitted by
 `main`, and `component` must keep identifying the emitter.
@@ -80,5 +85,14 @@ any `operation` value would be fabricated.
 `log_level` is the value the operator requested; `effective_log_level` is the level actually in
 force after an unrecognised value has resolved to INFO. Both appear on `config_loaded`, so a
 mismatch is diagnosable from that single entry.
+
+**`duration_us` (renamed from `duration_ms`):** `time.Duration.Milliseconds()` truncates toward
+zero, so any write completing in under 1 ms reported a metric-blinding `duration_ms=0`,
+indistinguishable from a genuinely instantaneous write. `duration_us` uses
+`elapsed.Microseconds()` instead — still an `int64`, no floating point enters the log schema — and
+gains three orders of magnitude of resolution. This is a field rename, not a unit change behind
+the same name: a consumer (dashboard, alert) filtering or graphing the old `duration_ms` field
+must be updated to `duration_us` and must not assume the two are interchangeable (`duration_us`
+values are ~1000× larger than the old `duration_ms` values for the same duration).
 
 ---

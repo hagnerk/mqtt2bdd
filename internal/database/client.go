@@ -15,8 +15,18 @@ import (
 )
 
 const (
-	minConns        = int32(1)
-	maxConns        = int32(5)
+	// minConns keeps at least one connection open at all times, so the first
+	// insert after an idle period does not pay the cost of establishing a new
+	// connection before it can run.
+	minConns = int32(1)
+	// maxConns is sized for a single writer goroutine (InsertMessage is only ever
+	// called from dbWriterLoop), not for concurrent load; five gives headroom for
+	// the occasional overlapping health-check query without over-provisioning
+	// connections the workload never uses.
+	maxConns = int32(5)
+	// maxConnIdleTime recycles idle connections after five minutes so a
+	// long-lived pool does not hold connections the database side may have
+	// silently dropped (e.g. after a network blip or a Postgres-side timeout).
 	maxConnIdleTime = 5 * time.Minute
 )
 

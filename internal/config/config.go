@@ -65,6 +65,10 @@ func LoadConfig() (*Config, error) {
 	}
 	mqttPort, err := strconv.Atoi(mqttPortStr)
 	if err != nil {
+		// %w, not %v or string concatenation: it wraps err so errors.Is/errors.As
+		// and errors.Unwrap can still recover the original *strconv.NumError from
+		// the caller, while the surrounding text adds the context (which variable,
+		// what was expected) needed to debug where in the call chain it happened.
 		return nil, fmt.Errorf("MQTT_PORT must be a valid integer: %w", err)
 	}
 	cfg.MQTTPort = mqttPort

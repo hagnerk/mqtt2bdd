@@ -171,7 +171,10 @@ type MessageHandler func(topic string, payload []byte)
 - `Connect(ctx context.Context) error` - Establish connection pool
 - `InsertMessage(ctx context.Context, sensor string, timestamp time.Time, metrics json.RawMessage) error` - Persist message
 - `Close()` - Close connection pool
-- `Ping(ctx context.Context) error` - Verify connection health
+- `IsConnected() bool` - Report the outcome of the most recent database interaction (no network call)
+- `LastWriteAt() time.Time` - Time of the last successful write, or the zero value
+- `WriteCount() uint64` - Monotonic count of successful writes since startup
+- `LogPoolStats()` - Log the current connection pool statistics at DEBUG level
 
 **Dependencies:**
 - `github.com/jackc/pgx/v5/pgxpool` ~5.7.0

@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// TestBufferUtilizationPercent uses Go's table-driven test idiom: one slice of
+// cases (a name plus inputs plus the expected output), run through a single
+// t.Run per case. Each subtest reports pass/fail independently, and any one of
+// them can be re-run in isolation with `go test -run TestBufferUtilizationPercent/full_buffer`
+// without touching the others — the pattern used throughout this codebase's
+// test suite (config_test.go, logger_test.go), called out explicitly here once.
 func TestBufferUtilizationPercent(t *testing.T) {
 	tests := []struct {
 		name     string

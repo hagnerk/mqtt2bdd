@@ -36,7 +36,7 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 			"operation", "insert",
 			"topic", sensor,
 			"payload_size", len(metrics),
-			"duration_ms", elapsed.Milliseconds(),
+			"duration_us", elapsed.Microseconds(),
 			"error", err,
 		)
 		return fmt.Errorf("failed to insert message for sensor %s: %w", sensor, err)
@@ -55,7 +55,7 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 			"topic", sensor,
 			"timestamp", timestamp.Format(time.RFC3339),
 			"payload_size", len(metrics),
-			"duration_ms", elapsed.Milliseconds(),
+			"duration_us", elapsed.Microseconds(),
 		)
 	} else {
 		c.logger.Debug("message persisted",
@@ -63,7 +63,7 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 			"topic", sensor,
 			"timestamp", timestamp.Format(time.RFC3339),
 			"payload_size", len(metrics),
-			"duration_ms", elapsed.Milliseconds(),
+			"duration_us", elapsed.Microseconds(),
 			"query", query,
 		)
 	}

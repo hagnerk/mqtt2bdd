@@ -1,5 +1,3 @@
-// Package mqtt provides a wrapper around the Eclipse Paho MQTT client library,
-// managing connection, subscription, and message reception.
 package mqtt
 
 import "time"
