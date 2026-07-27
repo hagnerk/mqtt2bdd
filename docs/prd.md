@@ -24,6 +24,7 @@ MQTT2BDD bridges this gap as a standalone Go application that subscribes to all 
 |------------|---------|--------------------------------------------------------------|-----------------|
 | 2026-01-23 | 0.1.0   | Initial PRD creation from Project Brief                      | PM Agent (John) |
 | 2026-07-25 | 0.2.0   | Epic 2 alignment - Story 2.5 AC9/AC10, Story 2.6 AC2/AC4/AC7 | PO (Sarah)      |
+| 2026-07-27 | 0.3.0   | Epic 4 added - module rename + public binary distribution    | PO (Sarah)      |
 
 Amendments are recorded inline, in a blockquote beneath the acceptance criteria of the story
 they affect, so a reader arriving at an AC always finds the reason it reads as it does.
@@ -132,6 +133,10 @@ Implement automatic reconnection logic for MQTT and database failures, message b
 ### Epic 3: Production Docker Image & Educational Documentation
 
 Create optimized production Dockerfile (multi-stage Alpine build distinct from dev container), establish integration testing infrastructure with isolated test docker-compose stack, and write comprehensive educational documentation covering architecture, deployment, debugging setup, and Go patterns walkthrough.
+
+### Epic 4: Public Release & Binary Distribution
+
+Publish the repository on GitHub under an MIT license and automate the production of downloadable, statically-linked binaries for four platforms on every version tag, so that anyone can install MQTT2BDD with a single `curl` command without cloning the repository or installing a Go toolchain.
 
 ---
 
@@ -592,6 +597,255 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 9. Security considerations documented (e.g., why statically-linked binary, non-root user in Docker)
 10. Generated GoDoc viewable with `go doc` or `godoc` tool
 11. All code passes `go fmt`, `go vet`, and `staticcheck`
+
+---
+
+## Epic 4: Public Release & Binary Distribution
+
+**Epic Goal:** Turn a working local application into a publicly installable one. Publish the
+repository on GitHub under an MIT license, and automate the production of statically-linked
+binaries for four platforms on every version tag, so that a home-automation user can download
+and run MQTT2BDD with a single `curl` command — no clone, no Go toolchain, no Docker build.
+
+This epic is brownfield: it was drafted after Epics 1-3 shipped. It is **additive in behaviour**
+— the version-injection mechanism it depends on (`main.Version` overridden via `-ldflags`)
+already exists from Story 3.1, and no application logic changes. It is **not** additive in files:
+Story 4.1 rewrites the module path across every Go source file, because the maintainer's GitHub
+account was renamed from `spydemon` to `hagnerk` after Epics 1-3 shipped, and a Go module path
+must match the repository that serves it.
+
+### Epic Context
+
+**Existing system context:**
+
+- Relevant functionality: the application already builds as a static binary
+  (`CGO_ENABLED=0`, no libc dependency) and already reports an injectable version at startup
+  (`main.Version`, defaulting to `dev`, overridden by `-ldflags "-X main.Version=…"`).
+- Technology stack: Go 1.23, Docker Compose. No CI/CD exists — there is no `.github/` directory,
+  no git remote, and no tag in the repository as of this epic's creation.
+- Integration points: `.github/workflows/` (new), `LICENSE` (new), `README.md` (new sections),
+  and the `go.mod` module path plus the import statement of every Go file, which must match the
+  actual GitHub repository path `github.com/hagnerk/mqtt2bdd` for `go install` to resolve.
+
+**Enhancement details:**
+
+- What is added: an MIT license, a public GitHub repository, a tag-triggered GitHub Actions
+  workflow that cross-compiles four targets and attaches the archives to a GitHub Release, and
+  the installation documentation that makes those archives usable.
+- How it integrates: entirely through new files. The workflow reuses the exact build flags of
+  the production `Dockerfile` (`CGO_ENABLED=0`, `-s -w -X main.Version=…`), so a released binary
+  and a container-built binary are produced identically.
+- Success criteria: from a clean machine with no Go and no Docker, `curl`-ing the release URL,
+  extracting the archive and running the binary yields a process that logs
+  `event=starting version=1.0.0` and connects to a configured broker and database.
+
+**Out of scope (deliberate):** publishing the Docker image to a registry (GHCR or Docker Hub).
+`docker-compose.prod.yml` keeps building the image locally with `--build`. This was considered
+and set aside to keep the epic focused on the downloadable-binary use case; it remains a
+candidate for a later epic.
+
+**Compatibility requirements:**
+
+- The only change to files under `cmd/` and `internal/` is the module path in their `import`
+  blocks (Story 4.1). No logic, signature, or behaviour changes; the test suite must pass
+  unchanged before and after.
+- The three Docker Compose stacks (`dev/`, `test/`, `docker-compose.prod.yml`) keep working
+  exactly as documented; the release workflow is an additional path to a binary, not a
+  replacement for any existing one.
+- `.gitignore` keeps ignoring `.env`, `.env.prod`, `*.env`, `bin/` and `__debug_bin*`, so no
+  build artefact or credential can reach the public repository.
+
+**Risk mitigation:**
+
+- **Primary risk:** making the repository public is irreversible with respect to what has
+  already been pushed — a secret in the git history stays retrievable even after deletion.
+  *Mitigation:* Story 4.2 gates the push behind an explicit audit of the full history. That
+  audit has already been run during epic drafting and came back clean: the only tracked
+  environment files are `dev/.env.example` and `.env.prod.example` (templates with no real
+  values), and the only credential-shaped strings in the tree are test fixtures. The commit
+  author email `kevin.hagner@spyzone.fr` will become public — a professional address, accepted.
+- **Secondary risk:** a broken workflow publishes a release with missing or non-functional
+  assets, and a GitHub Release tag is awkward to retract once people have fetched it.
+  *Mitigation:* Story 4.3 requires an end-to-end rehearsal on a pre-release tag (`v0.9.0-rc1`)
+  before `v1.0.0` is ever tagged, and gates the build behind the project's existing quality
+  checks so a failing test never produces a release.
+- **Rollback plan:** each story is independently revertible. Deleting `.github/workflows/`
+  removes the automation with no trace in the application; deleting a tag and its GitHub Release
+  removes a published version; the repository can be switched back to private. Only the
+  publication of already-pushed history is irreversible, which is why 4.1 audits before pushing.
+
+### Story 4.1: Rename the Go Module Path to the New GitHub Account
+
+**As a** maintainer whose GitHub account was renamed from `spydemon` to `hagnerk`,
+**I want** the module path and every reference to it updated across the repository,
+**so that** the module resolves to the repository that actually serves it.
+
+**Context:** a Go module path is not decorative — it is the URL the toolchain fetches from.
+Leaving it as `github.com/spydemon/mqtt2bdd` and relying on GitHub's account-rename redirect is
+not an option: a freed username can be re-registered by anyone, and the module path would then
+resolve to a stranger's repository. Doing this now is free — the module has never been published,
+has no tag and no remote, so there is no downstream consumer, no `retract` directive and no `/v2`
+path semantics to handle. That window closes the moment Story 4.2 pushes.
+
+**Acceptance Criteria:**
+
+1. `go.mod`'s module declaration reads `module github.com/hagnerk/mqtt2bdd`
+2. Every `import` referencing the old path is updated across the 8 affected Go files
+   (`cmd/mqtt2bdd/main.go`, `cmd/mqtt2bdd/integration_helpers_test.go`,
+   `internal/database/client.go`, `internal/database/client_test.go`,
+   `internal/database/integration_test.go`, `internal/logger/logger_test.go`,
+   `internal/config/config_test.go`, `internal/mqtt/client.go`, `internal/mqtt/client_test.go`)
+3. The rename is propagated to every remaining occurrence in the repository: `README.md`, the 18
+   story files under `docs/stories/`, and the 4 gate files under `docs/qa/gates/`. Completed
+   stories and gates are included deliberately — a module path is a factual identifier, not a
+   dated opinion, and a reader copying `go mod init github.com/spydemon/mqtt2bdd` out of Story
+   1.2 would be actively misled
+4. `grep -ri spydemon .` returns matches only where the old name is named *as* the old name —
+   Epic 4 of `docs/prd.md` and this story's own record, which document why the rename happened.
+   No occurrence remains as a live path anywhere else. Git history is out of scope: past commits
+   are immutable and are not rewritten
+5. Verification passes through the containerized toolchain, from `dev/`, per this project's
+   workflow — never on the host: `docker compose exec go-dev go build ./...`,
+   `docker compose exec go-dev go test ./...`, `docker compose exec go-dev go vet ./...`,
+   `docker compose exec go-dev gofmt -l .`
+6. The integration suite passes unchanged: `./test/run-integration-tests.sh` from the repository
+   root
+7. The change is mechanical and isolated: the commit contains the path rewrite and nothing else —
+   no logic change, no signature change, no opportunistic cleanup — so it can be reviewed at a
+   glance and reverted with a single `git revert`
+
+### Story 4.2: Prepare the Repository for Public Release
+
+**As a** maintainer,
+**I want** the repository licensed, audited, and published on GitHub,
+**so that** anyone can read the code and a release workflow has somewhere to publish to.
+
+**Acceptance Criteria:**
+
+1. `LICENSE` exists at the repository root, containing the unmodified MIT license text with
+   copyright line `Copyright (c) 2026 Kevin Hagner`
+2. `README.md` carries an MIT license badge next to the existing Go version badge, linking to
+   the `LICENSE` file — this closes Story 3.5 AC13, which left the license badge conditional
+   ("if applicable") because no license existed at the time
+3. `README.md` gains a short **License** section at the end of the document, stating the license
+   and pointing to the `LICENSE` file
+4. Full git history audited for secrets before the first push: no real credential, private key,
+   or non-template environment file is present in any commit. The audit is recorded in the
+   story's Dev Agent Record, including the command used, so it is reproducible
+5. `.gitignore` verified to still cover `.env`, `.env.prod`, `*.env`, `bin/` and `__debug_bin*`,
+   and `git status` is clean before the push
+6. A public GitHub repository exists at `github.com/hagnerk/mqtt2bdd`, matching exactly the
+   `go.mod` module declaration set in Story 4.1 — any divergence and
+   `go install github.com/hagnerk/mqtt2bdd/...` cannot resolve. Story 4.1 must be merged first;
+   pushing an unrenamed module publishes a path that cannot be fixed retroactively for anyone
+   who has already fetched it
+7. Remote `origin` points to that repository and the full `main` branch history is pushed
+8. The GitHub repository has a one-line description and topics set (`go`, `mqtt`, `postgresql`,
+   `home-automation`, `iot`, `docker`) for discoverability
+9. `README.md`'s Quick Start replaces the `<repository-url>` placeholder in the `git clone`
+   command with the real repository URL
+10. The pushed repository renders correctly on GitHub: README diagrams and tables display as
+    intended, and every relative link in the documentation resolves
+
+### Story 4.3: Automate Cross-Platform Binary Builds on Tag
+
+**As a** maintainer,
+**I want** a tagged version to automatically produce downloadable binaries for four platforms,
+**so that** publishing a release is one `git push --tags` and never a manual build.
+
+**Acceptance Criteria:**
+
+1. `.github/workflows/release.yml` exists, triggered only by pushed tags matching `v*.*.*`
+   (including pre-release suffixes such as `v0.9.0-rc1`)
+2. The workflow runs the project's existing quality gates in a first job that the build and
+   publish jobs depend on, so no artefact is built and no release is created if any gate fails:
+   - static analysis and unit tests: `gofmt -l .` (must report nothing), `go vet ./...`,
+     `staticcheck ./...`, `go test ./...`
+   - the integration suite: `./test/run-integration-tests.sh`, run from the repository root as
+     documented. The script is already self-contained and CI-friendly from Story 3.3 — it brings
+     the isolated `test/` stack up, waits for health, runs the `//go:build integration` suite,
+     tears everything down unconditionally, and exits non-zero on any failure — so it needs no
+     workflow-specific adaptation beyond a runner that provides Docker Compose
+   These gates run on GitHub's runners, not on a contributor's machine: this is a publication
+   gate, not a git hook. A failing gate leaves the pushed tag and commits in place and blocks
+   only the release; recovering means fixing, deleting the tag locally and remotely, and
+   re-tagging. The AC12 pre-release rehearsal exists so that this is never first discovered on
+   `v1.0.0`
+3. A build matrix produces one static binary per target: `linux/amd64`, `linux/arm64`,
+   `linux/arm` (with `GOARM=7`, for 32-bit Raspberry Pi OS), and `darwin/arm64`
+4. Every build uses `CGO_ENABLED=0` and `-ldflags="-s -w -X main.Version=<version>"`, where
+   `<version>` is the tag with its leading `v` stripped (`v1.0.0` → `1.0.0`) — identical flags to
+   the production `Dockerfile`, so a released binary matches a container-built one
+5. Each target is packaged as a `.tar.gz` archive under a **canonical, version-bearing name**:
+   `mqtt2bdd_<version>_linux_amd64.tar.gz`, `mqtt2bdd_<version>_linux_arm64.tar.gz`,
+   `mqtt2bdd_<version>_linux_armv7.tar.gz`, `mqtt2bdd_<version>_darwin_arm64.tar.gz` — so that a
+   downloaded file states on disk which version it holds
+6. Each archive is **also** published under a version-free alias name
+   (`mqtt2bdd_linux_amd64.tar.gz`, `mqtt2bdd_linux_arm64.tar.gz`, `mqtt2bdd_linux_armv7.tar.gz`,
+   `mqtt2bdd_darwin_arm64.tar.gz`), byte-identical to its canonical counterpart. The alias exists
+   solely to make the `releases/latest/download/<name>` URL resolvable — that URL requires an
+   asset name that does not change between releases. A release therefore carries eight archives,
+   four distinct payloads
+7. Each archive contains the `mqtt2bdd` binary (executable bit set), `LICENSE`, and `README.md`
+8. A `checksums.txt` asset lists the SHA-256 of all eight archives in the standard
+   `sha256sum -c` input format. Each canonical/alias pair necessarily shares one checksum, since
+   the payloads are identical; the file lists both names so that either download can be verified
+   without knowing about the other
+9. The workflow creates a GitHub Release on the tag, attaches the eight archives plus
+   `checksums.txt`, and uses GitHub's auto-generated release notes as the body
+10. A tag carrying a pre-release suffix (`-rc`, `-beta`) produces a release marked as
+    pre-release, so it never becomes the target of the `latest` URL — the aliases it publishes
+    are reachable only through its own pinned tag URL, which is the intent
+11. The workflow declares `permissions: contents: write` and authenticates with the default
+    `GITHUB_TOKEN` only — no additional secret is configured in the repository
+12. The workflow is rehearsed end to end on a `v0.9.0-rc1` tag before `v1.0.0` is tagged: the
+    run succeeds, all nine assets are present, a canonical and an alias archive verify to the
+    same SHA-256, and the extracted `linux/amd64` binary runs and logs
+    `event=starting version=0.9.0-rc1`
+13. Workflow YAML is commented to the standard of the rest of the repository — each job and each
+    non-obvious step (the `v`-stripping, `GOARM=7`, why each archive is published under two
+    names) explains its rationale, consistent with this project's educational intent
+
+### Story 4.4: Document Binary Installation from a GitHub Release
+
+**As a** home-automation user with no Go toolchain,
+**I want** copy-pasteable installation instructions,
+**so that** I can download, verify, and run MQTT2BDD without building anything.
+
+**Acceptance Criteria:**
+
+1. `README.md` gains an **Installation** section, placed before Quick Start, presented as the
+   path for running the application and Quick Start as the path for developing on it
+2. The section documents both download forms and states plainly when to use which:
+   - **Pinned** (recommended for anything scripted or deployed):
+     `.../releases/download/v1.2.3/mqtt2bdd_1.2.3_linux_amd64.tar.gz`. The tag sits in the URL,
+     so this URL keeps serving 1.2.3 forever — a later 2.0.0 with breaking configuration changes
+     can never be substituted underneath a script that pinned
+   - **Latest** (for a first manual try):
+     `.../releases/latest/download/mqtt2bdd_linux_amd64.tar.gz`, which follows the newest
+     non-pre-release version automatically, with the trade-off that it can change under you
+3. The section states that GitHub resolves no semver ranges server-side — there is no `^1.3`
+   equivalent — and shows the client-side pattern for a script that wants one: list releases via
+   `api.github.com/repos/hagnerk/mqtt2bdd/releases`, select the tag in the wanted range, then
+   build the pinned URL from it
+4. A table maps each of the four platforms to its canonical and alias archive names and to the
+   hardware it targets, stating explicitly that `linux_armv7` is for 32-bit Raspberry Pi OS and
+   `linux_arm64` for 64-bit
+5. Checksum verification is documented as a runnable sequence using `checksums.txt` and
+   `sha256sum --ignore-missing -c checksums.txt` — `--ignore-missing` is required and explained,
+   since `checksums.txt` lists all eight archives while a user has downloaded only one
+6. The section states that the Linux binaries are statically linked and therefore need no
+   runtime dependency, and that the macOS binary is unsigned — first run requires clearing the
+   Gatekeeper quarantine attribute, with the command given
+7. The section states what the binary still needs to run: a reachable MQTT broker, a PostgreSQL
+   database with the `sensor_metrics` schema applied, and the environment variables of the
+   Configuration section, to which it links. A binary alone is not a working system
+8. `README.md`'s Project Structure tree includes the new `.github/workflows/` directory and the
+   `LICENSE` file, with one-line descriptions
+9. `README.md`'s Development section documents how to cut a release: tag with `vX.Y.Z`, push the
+   tag, and let the workflow publish — including the pre-release rehearsal convention
+10. Every URL and command in the new sections is verified against the actual published release,
+    not written from assumption
 
 ---
 
