@@ -25,6 +25,7 @@ MQTT2BDD bridges this gap as a standalone Go application that subscribes to all 
 | 2026-01-23 | 0.1.0   | Initial PRD creation from Project Brief                      | PM Agent (John) |
 | 2026-07-25 | 0.2.0   | Epic 2 alignment - Story 2.5 AC9/AC10, Story 2.6 AC2/AC4/AC7 | PO (Sarah)      |
 | 2026-07-27 | 0.3.0   | Epic 4 added - module rename + public binary distribution    | PO (Sarah)      |
+| 2026-07-29 | 0.3.1   | Story 4.1 AC2/AC3 file counts realigned (8 -> 9 Go files, 18 -> 19 story files) | PO (Sarah)      |
 
 Amendments are recorded inline, in a blockquote beneath the acceptance criteria of the story
 they affect, so a reader arriving at an AC always finds the reason it reads as it does.
@@ -690,12 +691,12 @@ path semantics to handle. That window closes the moment Story 4.2 pushes.
 **Acceptance Criteria:**
 
 1. `go.mod`'s module declaration reads `module github.com/hagnerk/mqtt2bdd`
-2. Every `import` referencing the old path is updated across the 8 affected Go files
+2. Every `import` referencing the old path is updated across the 9 affected Go files
    (`cmd/mqtt2bdd/main.go`, `cmd/mqtt2bdd/integration_helpers_test.go`,
    `internal/database/client.go`, `internal/database/client_test.go`,
    `internal/database/integration_test.go`, `internal/logger/logger_test.go`,
    `internal/config/config_test.go`, `internal/mqtt/client.go`, `internal/mqtt/client_test.go`)
-3. The rename is propagated to every remaining occurrence in the repository: `README.md`, the 18
+3. The rename is propagated to every remaining occurrence in the repository: `README.md`, the 19
    story files under `docs/stories/`, and the 4 gate files under `docs/qa/gates/`. Completed
    stories and gates are included deliberately — a module path is a factual identifier, not a
    dated opinion, and a reader copying `go mod init github.com/spydemon/mqtt2bdd` out of Story
