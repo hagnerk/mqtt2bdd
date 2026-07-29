@@ -1,0 +1,141 @@
+schema: 1
+story: '4.2'
+story_title: 'Prepare the Repository for Public Release'
+gate: CONCERNS
+status_reason: >-
+  The seven ACs this story could deliver (1, 2, 3, 4, 5, 9, 11) are all met, independently
+  re-verified, and defect-free. LICENSE was diffed programmatically against the canonical MIT text
+  and is byte-identical, which is what earns the repository a real MIT chip rather than "Other". The
+  history audit was re-run in full and all 17 credential-shaped matches confirmed as development
+  fixtures. DOC-001 is genuinely closed after three deferrals. The gate is CONCERNS, not PASS, for
+  one reason only: ACs 6, 7, 8 and 10 are not met, because publishing a public repository is
+  irreversible and is the maintainer's decision, which the maintainer deferred. The story handles
+  that honestly — it states the gap in four places, delivers every precondition, and carries a
+  verified runnable handover — but an unmet AC is an unmet AC and this gate will not record it as
+  anything else. Nothing here blocks Stories 4.3 or 4.4.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-07-29T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'PUB-001'
+    severity: medium
+    finding: >-
+      ACs 6, 7, 8 and 10 are not met. The GitHub repository github.com/hagnerk/mqtt2bdd does not
+      exist (confirmed independently: `gh repo view hagnerk/mqtt2bdd` returns "Could not resolve to a
+      Repository"), `git remote -v` is empty, and no history has been pushed. AC10's
+      GitHub-rendering verification is unreachable in consequence. This is a deliberate, disclosed
+      deferral of an irreversible owner decision, not a defect in the work delivered, and it is not
+      raised as a defect — but it is tracked as open so it cannot be lost.
+    suggested_owner: maintainer
+    refs: ['docs/stories/4.2.story.md#acs-6-7-8-and-10-not-done-handed-over']
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        PUB-001: four ACs await a maintainer action. Story 4.3 can be authored and reviewed without
+        it (a workflow file is a file), but 4.3's AC12 rehearsal and 4.4's AC10 URL verification both
+        inherit the same dependency.
+
+quality_score: 80
+expires: '2026-08-12T00:00:00Z'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 9, 11]
+    ac_gaps: [6, 7, 8, 10]
+    ac_gap_reason: >-
+      Deferred to the maintainer, not failed. Each requires creating or pushing to a public GitHub
+      repository. The gh CLI is installed and authenticated as hagnerk on the development machine,
+      so the deferral is a deliberate choice and not an incapacity — the Dev Agent Record states this
+      explicitly, which is the right way to report it.
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      This story IS the security review for the epic, and it holds up. All four audit commands were
+      re-run independently: two .example templates are the only env- or key-shaped files ever added
+      across 215 distinct paths in the full history; zero "BEGIN ... PRIVATE KEY" blobs in the entire
+      object database (a content scan, not a filename scan, so a key pasted into a Markdown file
+      would be caught); 17 assignment-shaped matches, every one traced to one of four development
+      fixtures (dev_password, wrong_password, test_password, prod_test_password), none of which
+      grants access to a system that exists. .gitignore was verified working rather than present —
+      git check-ignore -v confirms dev/.env, .env.prod, bin/ and __debug_bin262058197 are each caught
+      by the specific pattern intended for them, and git ls-files confirms only the two templates are
+      tracked. The one irreversible personal-data consequence (the author email becoming permanently
+      public) is restated in the record rather than quietly inherited from the epic.
+  performance:
+    status: PASS
+    notes: 'Not applicable. No code changed; go build re-run clean as a coherence check only.'
+  reliability:
+    status: PASS
+    notes: >-
+      No behavioural surface touched. go.mod, go.sum and every .go file are byte-identical; the diff
+      is LICENSE (new, 21 lines) and README.md (11 insertions, 5 deletions).
+  maintainability:
+    status: PASS
+    notes: >-
+      DOC-001 closed after three deferrals, and closed correctly: the reworded annotation now agrees
+      with the prose three lines below it, and the ASCII diagram was left untouched as instructed.
+      The PO's ruling on the third go func() site was followed exactly — AC11 was not widened and the
+      "three goroutines started from main()" sentence was left alone. Two deliberate deferrals
+      (Project Structure tree entry -> 4.4 AC8; no .github/ directory -> 4.3) are flagged in the
+      record so they read as scoped rather than as omissions.
+
+recommendations:
+  immediate:
+    - action: >-
+        PUB-001 (maintainer): run the four-command handover in the Dev Agent Record to close ACs 6,
+        7, 8 and 10. Every precondition is verified: module path matches the target repository, audit
+        clean, remote empty, tree clean, branch main.
+      refs: ['docs/stories/4.2.story.md#acs-6-7-8-and-10-not-done-handed-over']
+  future:
+    - action: >-
+        Story 4.3's AC12 (end-to-end rehearsal on a v0.9.0-rc1 tag) and Story 4.4's AC10 (verify
+        every URL against the actual published release) both inherit PUB-001's dependency. The SM
+        should scope both the same way this story scoped ACs 6/7/8/10 rather than rediscovering the
+        constraint twice.
+      refs: ['docs/prd.md']
+    - action: >-
+        REL-001 (gate 3.3) and TEST-001 (gate 3.3) are unchanged and still unowned. Story 4.3 wires
+        test/run-integration-tests.sh into CI and is TEST-001's natural home.
+      refs: ['test/run-integration-tests.sh', 'cmd/mqtt2bdd/main.go']
+
+carry_forward_register:
+  resolved:
+    - { id: 'FIND-010', originating_gate: '2.2', resolved_in: '3.3' }
+    - { id: 'FIND-012', originating_gate: '2.3', resolved_in: '2.4' }
+    - { id: 'FIND-016', originating_gate: 'pre-3.3', resolved_in: '3.3' }
+    - { id: 'FIND-019', originating_gate: '2.5', resolved_in: '3.6' }
+    - { id: 'FIND-020', originating_gate: '2.6', resolved_in: '3.6' }
+    - { id: 'FIND-021', originating_gate: '2.6', resolved_in: '3.4' }
+    - { id: 'FIND-026', originating_gate: '4.1', resolved_in: '4.1' }
+    - { id: 'DOC-001', originating_gate: '3.5', resolved_in: '4.2' }
+    - { id: 'STORY-3.5-AC13', originating_gate: '3.5', resolved_in: '4.2', note: 'Conditional AC ("license badge if applicable") satisfied vacuously in 3.5 because no license existed; satisfied substantively here for the first time.' }
+  open:
+    - { id: 'PUB-001', originating_gate: '4.2', owner: 'maintainer', reason: 'ACs 6/7/8/10 await an irreversible publication decision reserved to the owner' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
+    - { id: 'TEST-001', originating_gate: '3.3', reason: 'Negative-path re-exercise deferred to the next touch of the integration test script; story 4.3 is the next realistic opportunity' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Deliberately deferred, accepted risk. Re-assessed for publication in this story and left unchanged: the setting is a labelled default in a template a reader deploys on their own network, which is disclosure rather than exposure.' }
+  register_status: >-
+    Clean. DOC-001 leaves the register after three deferrals, and Story 3.5's conditional AC13 is
+    recorded as substantively closed — the exact "FIND-017 failure mode" (a requirement documented as
+    handled without a story closing it) this project tracks against. One new open item, PUB-001,
+    owned by the maintainer rather than by a story.
+
+history:
+  - at: '2026-07-29T00:00:00Z'
+    gate: CONCERNS
+    note: >-
+      Seven of eleven ACs delivered and independently re-verified, with no defect found. LICENSE
+      diffed programmatically against canonical MIT — byte-identical. History audit re-run in full.
+      DOC-001 closed. Gate is CONCERNS solely because ACs 6/7/8/10 await a maintainer publication
+      decision (PUB-001), which the story discloses honestly rather than claiming.
