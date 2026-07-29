@@ -1,0 +1,185 @@
+schema: 1
+story: '4.3'
+story_title: 'Automate Cross-Platform Binary Builds on Tag'
+gate: CONCERNS
+status_reason: >-
+  Thirteen of fourteen ACs met and independently re-verified. The workflow's substantive claims were
+  not accepted on the strength of plausible-looking YAML: the build and packaging pipeline was
+  reproduced outside CI, each binary's GOOS/GOARCH/GOARM/CGO_ENABLED read back from its own embedded
+  build settings, and the canonical/alias byte-identity and the 8-lines/4-hashes checksum property
+  measured rather than argued. AC14 (TEST-001) is closed with real evidence after being open since
+  gate 3.3. One low-severity latent defect found and fixed during review (CI-001: staticcheck invoked
+  by bare name, depending on $GOPATH/bin being on PATH — a dependency on runner behaviour that would
+  have surfaced only on a tagged release). The gate is CONCERNS solely because AC12, the end-to-end
+  rehearsal, requires a GitHub repository that does not exist under PUB-001. Two of AC12's four
+  assertions are already locally pre-verified, so what remains untested is the runner environment and
+  the release-creation path, not the build or packaging logic.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-07-29T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'PUB-002'
+    severity: medium
+    finding: >-
+      AC12 is not met. The end-to-end rehearsal on a v0.9.0-rc1 tag requires a workflow run on
+      GitHub's runners against a repository that does not exist, because Story 4.2's ACs 6-8 are
+      deferred under PUB-001. No tag was created and nothing was pushed. This is an inherited
+      dependency, not a defect in this story's work, and it is scoped honestly: the Dev Agent Record
+      splits AC12's four assertions into the two already exercised locally (canonical/alias share a
+      SHA-256; the extracted binary logs the injected version) and the two that genuinely need a
+      runner (the run succeeds; nine assets present).
+    suggested_owner: maintainer
+    refs: ['docs/stories/4.3.story.md#ac12-not-done-handed-over']
+
+resolved_issues:
+  - id: 'CI-001'
+    severity: low
+    finding: >-
+      Latent, would have failed only on a tagged release. The Staticcheck step ran
+      `go install honnef.co/go/tools/cmd/staticcheck@v0.6.1` and then invoked `staticcheck ./...` by
+      bare name. `go install` places the binary in $(go env GOPATH)/bin, and whether that directory
+      is on PATH is a property of the runner image and of actions/setup-go's current behaviour, not
+      something this workflow controls. It works today; nothing in the file makes it keep working,
+      and the failure would appear as "staticcheck: command not found" during a release run.
+    resolution: >-
+      Changed to invoke the absolute path, "$(go env GOPATH)/bin/staticcheck" ./..., with the
+      reasoning in a comment. Costs nothing and removes the dependency on undocumented runner
+      behaviour for a gate whose whole purpose is to block bad releases. Workflow re-parsed clean
+      after the edit.
+    verified_by: 'Quinn (Test Architect), 2026-07-29'
+  - id: 'TEST-001'
+    severity: low
+    finding: >-
+      Open since gate 3.3: test/run-integration-tests.sh's AC9 non-zero-exit path was accepted on the
+      Dev's account and never independently exercised. Its consequence changed with this story, since
+      AC2 puts that exit code in front of every release.
+    resolution: >-
+      Closed with evidence, and re-verified by this review from the story's recorded transcript and
+      by re-reading the script's control flow. A deliberate one-line breakage on the read side
+      (line 49) produced exit code 1 on the intended branch
+      ("FAIL: smoke-test message not found in sensor_metrics (rows=0)"), and the trap cleanup EXIT
+      still removed every container, the network AND the volumes — the half an exit code alone does
+      not prove. The breakage was reverted to a byte-identical file (git diff --stat empty) and the
+      unmodified script re-run to exit 0.
+    verified_by: 'Quinn (Test Architect), 2026-07-29'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        PUB-002: AC12's rehearsal awaits PUB-001. The rehearsal is what validates the runner
+        environment and the release-creation path; the build and packaging logic is already
+        locally verified.
+
+quality_score: 85
+expires: '2026-08-12T00:00:00Z'
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]
+    ac_gaps: [12]
+    ac_gap_reason: >-
+      Deferred, inherited from PUB-001. Two of AC12's four assertions are pre-verified locally.
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      permissions declared at workflow level as contents:write and nothing broader, so the workflow
+      cannot silently inherit a wider default. grep for "secrets." across the file returns no match;
+      the only token reference is GH_TOKEN via github.token. Every `uses:` is a first-party
+      actions/* action (checkout@v4, setup-go@v5, upload-artifact@v4, download-artifact@v4) —
+      verified by reading them out of the parsed document, not by scanning the text. Creating the
+      release with the preinstalled gh CLI rather than a third-party action is the right call for a
+      workflow whose entire output is artefacts other people download and execute: it adds nothing
+      to the supply chain. Note the release job deliberately has no checkout step and passes
+      --repo "${GITHUB_REPOSITORY}" explicitly, which is what makes gh's repo detection unnecessary —
+      checked rather than assumed.
+  performance:
+    status: PASS
+    notes: >-
+      Four matrix jobs run in parallel with fail-fast:false, so one broken platform reports one
+      failure instead of masking the state of the other three — and the release job still cannot run,
+      because needs:build requires every matrix leg to succeed. setup-go's module caching is on by
+      default. Artifact retention is 1 day, appropriate for a hand-off between jobs in the same run.
+  reliability:
+    status: PASS
+    notes: >-
+      AC2's guarantee is structural rather than conventional: needs: is a hard dependency, so a
+      failing gate cannot be overridden by remembering to check. No continue-on-error anywhere.
+      The gofmt step correctly inspects the output rather than trusting the exit code — gofmt -l
+      exits 0 even when it lists files, so a bare step would have been a gate that can never fail.
+      The checksum step asserts 8 lines and 4 distinct hashes rather than just writing the file,
+      which is what would catch a regression in the aliasing before publication rather than after.
+      The Package step verifies LICENSE and README.md exist rather than assuming, so a missing
+      licence cannot ship silently in every archive of every release. An empty GOARM (what the
+      matrix passes for the three non-ARM targets) was verified not to break the build — a CI-only
+      failure mode otherwise.
+  maintainability:
+    status: PASS
+    notes: >-
+      144 comment lines in 286. Every job states what depends on it; each non-obvious step carries
+      its rationale, and nothing restates the obvious (actions/checkout@v4 has no comment, correctly).
+      The matrix name fragment is data rather than derived from GOOS/GOARCH, with the reason
+      commented — deriving it would produce linux_arm where AC5 and AC6 both name the file
+      linux_armv7. Build flags are byte-for-byte the production Dockerfile's, so a released binary
+      and a container-built one cannot diverge.
+
+recommendations:
+  immediate:
+    - action: >-
+        PUB-002 (maintainer): after Story 4.2's PUB-001 publication, run the AC12 rehearsal runbook
+        in the Dev Agent Record. Tag v0.9.0-rc1, watch the run, confirm nine assets and the
+        pre-release flag, then tag v1.0.0.
+      refs: ['docs/stories/4.3.story.md#ac12-not-done-handed-over']
+  future:
+    - action: >-
+        Story 4.4 AC5 must document `sha256sum --ignore-missing -c checksums.txt`. Verified during
+        this story: it works on GNU coreutils and on macOS (both sha256sum and shasum -a 256), but
+        NOT on BusyBox, which rejects the option outright. Marginal for the audience but worth one
+        line rather than a support question.
+      refs: ['README.md']
+    - action: >-
+        REL-001 (gate 3.3) is unchanged and still unowned. Requires a behavioural change in
+        healthCheckLoop; no story in Epic 4 touches Go source.
+      refs: ['cmd/mqtt2bdd/main.go']
+
+carry_forward_register:
+  resolved:
+    - { id: 'FIND-010', originating_gate: '2.2', resolved_in: '3.3' }
+    - { id: 'FIND-012', originating_gate: '2.3', resolved_in: '2.4' }
+    - { id: 'FIND-016', originating_gate: 'pre-3.3', resolved_in: '3.3' }
+    - { id: 'FIND-019', originating_gate: '2.5', resolved_in: '3.6' }
+    - { id: 'FIND-020', originating_gate: '2.6', resolved_in: '3.6' }
+    - { id: 'FIND-021', originating_gate: '2.6', resolved_in: '3.4' }
+    - { id: 'FIND-026', originating_gate: '4.1', resolved_in: '4.1' }
+    - { id: 'DOC-001', originating_gate: '3.5', resolved_in: '4.2' }
+    - { id: 'STORY-3.5-AC13', originating_gate: '3.5', resolved_in: '4.2' }
+    - { id: 'TEST-001', originating_gate: '3.3', resolved_in: '4.3' }
+    - { id: 'CI-001', originating_gate: '4.3', resolved_in: '4.3' }
+  open:
+    - { id: 'PUB-001', originating_gate: '4.2', owner: 'maintainer', reason: 'Story 4.2 ACs 6/7/8/10 await an irreversible publication decision' }
+    - { id: 'PUB-002', originating_gate: '4.3', owner: 'maintainer', reason: 'Story 4.3 AC12 rehearsal; blocked by PUB-001' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, re-assessed at publication in Story 4.2 and left unchanged' }
+  register_status: >-
+    Clean. TEST-001 leaves the register after being open since gate 3.3 — the last of the three
+    long-running documentation/test findings (DOC-001, TEST-001) that Epic 4 has closed by the same
+    principle: a finding whose consequence changes is a finding whose deferral should end. Only
+    REL-001 remains genuinely unowned, and it is not actionable. The two open items are both
+    maintainer-owned publication dependencies, not story work.
+
+history:
+  - at: '2026-07-29T00:00:00Z'
+    gate: CONCERNS
+    note: >-
+      Thirteen of fourteen ACs verified, with the build and packaging pipeline reproduced outside CI
+      rather than inferred from the YAML. CI-001 found and fixed during review. TEST-001 closed with
+      evidence. AC12 deferred under PUB-002, inherited from PUB-001.

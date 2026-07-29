@@ -75,9 +75,15 @@ jobs:
         # Pinned to the same version dev/Dockerfile.dev installs. A CI gate running a different
         # analyser version from the one developers run locally produces failures nobody can
         # reproduce, which is how a quality gate turns into something people route around.
+        #
+        # Invoked by absolute path rather than by name. `go install` puts the binary in
+        # $(go env GOPATH)/bin, and whether that directory is on PATH is a property of the
+        # runner image and of setup-go's current behaviour — not something this workflow
+        # controls or should depend on. Calling it by name would work until it silently did
+        # not, and the only place that would surface is a tagged release run.
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.6.1
-          staticcheck ./...
+          "$(go env GOPATH)/bin/staticcheck" ./...
 
       - name: Unit tests
         run: go test ./...
