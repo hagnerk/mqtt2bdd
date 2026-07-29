@@ -127,10 +127,13 @@ mqtt2bdd/
 │   ├── mosquitto/mosquitto.conf
 │   └── run-integration-tests.sh         # Run from the repository root
 ├── docs/                                # PRD, sharded architecture, stories, QA gates
+├── .github/
+│   └── workflows/release.yml            # Tag-triggered build of the four release binaries
 ├── Dockerfile                           # Production multi-stage build
 ├── docker-compose.prod.yml              # Production deployment stack (app + postgres + mosquitto)
 ├── .env.prod.example                    # Production env template (no real values)
 ├── go.mod / go.sum                      # Module: github.com/hagnerk/mqtt2bdd
+├── LICENSE                              # MIT
 └── README.md
 ```
 
@@ -151,15 +154,143 @@ Package responsibilities:
 ## Prerequisites
 
 - **Docker** and **Docker Compose** (the `docker compose` plugin, not the standalone
-  `docker-compose` binary) — the only hard requirement; the entire development workflow is
-  containerized, so no host Go installation is needed to run the application.
+  `docker-compose` binary) — the only hard requirement **for developing on this project**; the
+  entire development workflow is containerized, so no host Go installation is needed. To *run*
+  the application you need neither Docker nor Go: download a release binary instead, as
+  described under [Installation](#installation).
 - **Go 1.23+** — optional, needed only if you want to run `go` commands directly on the host
   instead of through the containerized `go-dev` toolchain (not how this project's own workflow
   operates, but a reasonable alternative for exploring the code).
 
 This project targets Go ~1.23.6 and Docker Compose ~5.1.2.
 
+## Installation
+
+**This is the path for running MQTT2BDD.** If you want to work on the code instead, skip to
+[Quick Start](#quick-start).
+
+Every tagged version publishes statically-linked binaries for four platforms. Downloading one
+needs no Go toolchain, no Docker, and no build step.
+
+### Pick your archive
+
+Run `uname -m` on the target machine and read the answer off this table. This is the step people
+get wrong: a Raspberry Pi 4 can run either a 32-bit or a 64-bit OS, and what matters is the OS
+you installed, not what the hardware could support.
+
+| `uname -m` | Platform | Canonical archive | Version-free alias |
+| --- | --- | --- | --- |
+| `x86_64` | Linux on 64-bit Intel/AMD | `mqtt2bdd_<version>_linux_amd64.tar.gz` | `mqtt2bdd_linux_amd64.tar.gz` |
+| `aarch64` | Linux on 64-bit ARM — **64-bit** Raspberry Pi OS, most ARM servers | `mqtt2bdd_<version>_linux_arm64.tar.gz` | `mqtt2bdd_linux_arm64.tar.gz` |
+| `armv7l` | Linux on 32-bit ARM — **32-bit** Raspberry Pi OS | `mqtt2bdd_<version>_linux_armv7.tar.gz` | `mqtt2bdd_linux_armv7.tar.gz` |
+| `arm64` (macOS) | macOS on Apple Silicon | `mqtt2bdd_<version>_darwin_arm64.tar.gz` | `mqtt2bdd_darwin_arm64.tar.gz` |
+
+There is deliberately **no `darwin_amd64` build**: Intel Macs are not a target. Build from source
+if you need one — the application cross-compiles with no special toolchain.
+
+Each archive contains three files and no enclosing directory: the `mqtt2bdd` binary (already
+executable), `LICENSE`, and `README.md`.
+
+### Download
+
+Two URL forms exist, and the choice matters more than it looks.
+
+**Pinned** — use this for anything scripted, deployed, or written down. The tag is part of the
+URL, so it keeps serving that exact version forever. A later `2.0.0` with breaking configuration
+changes can never appear underneath a script that pinned:
+
+```bash
+curl -LO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/mqtt2bdd_1.2.3_linux_amd64.tar.gz
+```
+
+**Latest** — use this for a first manual try. It follows the newest non-pre-release version
+automatically, which is convenient exactly until it is not: the version can change under you
+between one run and the next. This is why the alias archives carry no version in their names —
+the `latest` URL requires an asset name that stays the same across releases:
+
+```bash
+curl -LO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/mqtt2bdd_linux_amd64.tar.gz
+```
+
+### Verify the download
+
+```bash
+curl -LO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+# mqtt2bdd_1.2.3_linux_amd64.tar.gz: OK
+```
+
+`--ignore-missing` is not optional here. `checksums.txt` lists all eight archives — four platforms
+under two names each — and you have downloaded one. Without the flag, `sha256sum` reports seven
+failures for files that were never meant to be there and exits non-zero, which reads like a failed
+verification rather than an absent file.
+
+On Alpine or anywhere else with BusyBox, `sha256sum` has no `--ignore-missing`. Select your line
+instead:
+
+```bash
+grep mqtt2bdd_1.2.3_linux_amd64.tar.gz checksums.txt | sha256sum -c -
+```
+
+A matching checksum tells you the download is complete and uncorrupted. It is not a signature and
+proves nothing about who produced the file.
+
+### Extract and run
+
+```bash
+tar -xzf mqtt2bdd_1.2.3_linux_amd64.tar.gz
+./mqtt2bdd
+# time=... level=INFO msg="MQTT2BDD starting" component=main event=starting version=1.2.3
+```
+
+The Linux binaries are statically linked (`CGO_ENABLED=0` — no libc, no dynamic loader), so they
+have no runtime dependency at all: no package to install, no container to run them in.
+
+**On macOS, the binary is unsigned**, and Gatekeeper will refuse to run it with a dialog that
+suggests the file is damaged. It is not. Clear the quarantine attribute once:
+
+```bash
+xattr -d com.apple.quarantine ./mqtt2bdd
+```
+
+### What the binary still needs
+
+A binary alone is not a working system. Before the first run you need:
+
+- **A reachable MQTT broker.** Any broker; the application subscribes to `#` and needs no
+  per-sensor configuration.
+- **A PostgreSQL database with the `sensor_metrics` schema applied.** The schema is
+  [`prod/init-db/01-schema.sql`](prod/init-db/01-schema.sql) — apply it once with
+  `psql -f prod/init-db/01-schema.sql`.
+- **Environment variables** telling the application where those two are. Every variable, its
+  default, and whether it is required is in [Configuration](#configuration). Without them the
+  application logs `event=starting` and then exits non-zero when it fails to connect — which is
+  the most common reason a first run "does not work".
+
+### Pinning to a version range
+
+GitHub resolves **no** semver ranges server-side. There is no `^1.3` or `~1.3` URL; the only two
+forms the server understands are a pinned tag and `latest`. Anything in between is the client's
+job.
+
+If a script needs "the newest 1.x", list the releases and pick the tag yourself, then build the
+pinned URL from it:
+
+```bash
+TAG=$(curl -s https://api.github.com/repos/hagnerk/mqtt2bdd/releases \
+  | jq -r '.[] | select(.prerelease | not) | .tag_name' \
+  | grep '^v1\.' | head -1)
+curl -LO "https://github.com/hagnerk/mqtt2bdd/releases/download/${TAG}/mqtt2bdd_${TAG#v}_linux_amd64.tar.gz"
+```
+
+That endpoint is unauthenticated and therefore rate-limited to 60 requests per hour per IP. A
+script that polls it will eventually get an error response rather than a release list, and the
+failure is not obvious — handle it, or cache the resolved tag.
+
 ## Quick Start
+
+**This is the path for developing on MQTT2BDD.** To just run it, see
+[Installation](#installation) above.
 
 Clone the repository and start the development stack:
 
@@ -283,6 +414,35 @@ docker compose exec go-dev go build -ldflags="-X main.Version=0.1.0" -o mqtt2bdd
 
 Both commands run from `dev/`. Substitute any version string — a Git tag or a commit SHA,
 for example — for `0.1.0`.
+
+### Cutting a release
+
+Releases are produced entirely by `.github/workflows/release.yml`. There is no manual build step,
+and the version a released binary reports comes from the tag by the same `-ldflags` mechanism
+described just above.
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+That is the whole process. On a tag matching `v*.*.*`, the workflow runs this project's existing
+quality gates first — `gofmt`, `go vet`, `staticcheck`, `go test`, and the full integration suite —
+and only if every one of them passes does it build the four platforms and publish a release with
+nine assets: eight archives and `checksums.txt`.
+
+If a gate fails, nothing is published. The tag and its commits stay where they are; only the
+release is blocked. To recover, fix the problem, remove the tag from both places, and re-tag:
+
+```bash
+git tag -d v1.2.3
+git push --delete origin v1.2.3
+```
+
+**Rehearse on a pre-release tag first.** Tag `v1.2.3-rc1`, confirm the run succeeded and the nine
+assets are present, then tag the real version. Any tag whose version contains a `-` is published
+as a pre-release, and a pre-release never becomes the target of the `latest` URL — so a rehearsal
+cannot be served to somebody who asked for the newest version.
 
 ## Production Deployment
 
