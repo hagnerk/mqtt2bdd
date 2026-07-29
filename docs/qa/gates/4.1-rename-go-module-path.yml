@@ -1,0 +1,137 @@
+schema: 1
+story: '4.1'
+story_title: 'Rename the Go Module Path to the New GitHub Account'
+gate: PASS
+status_reason: >-
+  All 7 ACs independently re-verified against the live repository, not accepted from the Dev Agent
+  Record. The diff was proved mechanical by construction rather than by inspection: normalising both
+  the old and new token to a placeholder makes every changed line appear an even number of times, so
+  no line in the 113-line diff differs by anything other than the renamed token. go.mod, all 18 Go
+  lines (including the non-import exec.Command site), README.md, 19 story files and 4 gate files are
+  correct; docs/prd.md is byte-identical with its 5 carved-out occurrences intact. Full toolchain
+  re-run clean; the integration suite — which rebuilds the production Dockerfile — passes at exit 0,
+  which additionally proves the production build path survives the rename. One low-severity
+  documentary error found and corrected in place (FIND-026): the story and the Dev Agent Record both
+  claimed FIND-012 remains open, when it was resolved in Story 2.4. No code defect found.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-07-29T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+resolved_issues:
+  - id: 'FIND-026'
+    severity: low
+    finding: >-
+      Documentary accuracy, not a code defect. Task 4's subtask and the Dev Agent Record's
+      corresponding Completion Note both asserted that "FIND-012 itself stays open and unowned".
+      FIND-012 was in fact resolved in Story 2.4, whose Task 7 (AC12) removed the stale
+      "(story 2.4)" inline comments from cmd/mqtt2bdd/main.go. Gates 2.3 and 2.3.1 (both
+      updated 2026-05-31) predate that fix and record the finding as still open, which is what the
+      draft read; Story 2.4's own gate is dated 2026-07-25. The error survived the SM draft and the
+      PO draft validation.
+    resolution: >-
+      Corrected in place in both locations, with the evidence: grep -rn "(story " --include='*.go' .
+      returns zero matches today, and Story 3.6's four-item closing summary does not list FIND-012 —
+      both consistent only with the finding being closed. The correction changes nothing about what
+      this story does: the seven TODO(spydemon) lines are historical records of a closed finding and
+      AC3/AC4 require the owner handle renamed in them either way.
+    verified_by: 'Quinn (Test Architect), 2026-07-29'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 95
+expires: '2026-08-12T00:00:00Z'
+
+evidence:
+  tests_reviewed: 5
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      No security surface touched — no credential, configuration key, environment variable, or
+      network path changed. Independently confirmed that the two gitignored binaries carrying the old
+      module path in compiled metadata (__debug_bin262058197, bin/) were not rewritten: the Dev built
+      the file list from git ls-files, which cannot reach an ignored path, rather than from a
+      recursive grep. This is a genuine improvement over the command form the story suggested, and
+      the Dev recorded it as a deviation rather than silently substituting it.
+  performance:
+    status: PASS
+    notes: >-
+      Not applicable. An identifier rename produces byte-identical machine code; go test timings are
+      unchanged across all five packages.
+  reliability:
+    status: PASS
+    notes: >-
+      The load-bearing guarantee is the compiler's, not a test's: a missed import path is a build
+      error, and go build ./... is clean. The one occurrence a build cannot catch —
+      integration_helpers_test.go:84, which builds the test binary by package path rather than
+      importing it — is covered by the integration suite, which was run and passed at exit 0. No
+      existing test needed editing, which is the story's own stated signal that the change really was
+      mechanical.
+  maintainability:
+    status: PASS
+    notes: >-
+      Diff is 34 files, 113 insertions, 113 deletions, perfectly balanced. Verified stronger than
+      "looks mechanical": after normalising both tokens, every changed line appears an even number of
+      times, so no line differs by anything but the token. docs/architecture/'s deliberate
+      github.com/username/mqtt2bdd placeholder was correctly left alone. The PRD count realignment
+      was kept in a separate PO commit so AC7's isolation claim is checkable at a glance.
+
+recommendations:
+  immediate: []
+  future:
+    - action: >-
+        Story 4.2 must not be started before this commit is the state of main — it publishes the
+        module path to a public remote, after which a rename requires a retract directive and cannot
+        be made retroactive for anyone who has already fetched. Confirmed still safe today:
+        git remote -v and git tag are both empty.
+      refs: ['go.mod', 'docs/prd.md']
+    - action: >-
+        DOC-001 (Story 3.5, non-blocking): the README Architecture-diagram wording nit is still open.
+        Stories 4.2 and 4.4 both edit README.md substantially and are its natural homes; this story
+        correctly declined it under AC7.
+      refs: ['README.md']
+    - action: >-
+        REL-001 and TEST-001 (Story 3.3, non-blocking) are unchanged and remain unowned. This story
+        runs test/run-integration-tests.sh but does not touch it, so TEST-001's "next time the script
+        is touched" trigger did not fire. Story 4.3 wires that same script into CI and is the next
+        realistic opportunity.
+      refs: ['test/run-integration-tests.sh', 'cmd/mqtt2bdd/main.go']
+
+carry_forward_register:
+  resolved:
+    - { id: 'FIND-010', originating_gate: '2.2', resolved_in: '3.3' }
+    - { id: 'FIND-012', originating_gate: '2.3', resolved_in: '2.4' }
+    - { id: 'FIND-016', originating_gate: 'pre-3.3', resolved_in: '3.3' }
+    - { id: 'FIND-019', originating_gate: '2.5', resolved_in: '3.6' }
+    - { id: 'FIND-020', originating_gate: '2.6', resolved_in: '3.6' }
+    - { id: 'FIND-021', originating_gate: '2.6', resolved_in: '3.4' }
+    - { id: 'FIND-026', originating_gate: '4.1', resolved_in: '4.1' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
+    - { id: 'TEST-001', originating_gate: '3.3', reason: 'Negative-path re-exercise deferred to the next touch of the integration test script; story 4.3 is the next realistic opportunity' }
+    - { id: 'DOC-001', originating_gate: '3.5', reason: 'Low-severity README wording nit; stories 4.2 and 4.4 both edit README.md and are natural homes' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Deliberately deferred, accepted risk recorded in security.md; not a story. Re-assessed for Epic 4: the setting lives in a local dev fixture and going public does not change the exposure; story 4.2 AC4 is where that judgement is formally re-made' }
+  register_status: >-
+    Clean. FIND-012 added to the resolved list — it was closed in Story 2.4 but no gate had ever
+    recorded it as such, which is what allowed FIND-026 to be written into this story unchallenged.
+    Recording it here closes that gap for future drafts.
+
+history:
+  - at: '2026-07-29T00:00:00Z'
+    gate: PASS
+    note: >-
+      First story of Epic 4. All 7 ACs independently re-verified; diff proved mechanical by token
+      normalisation rather than by reading; toolchain and integration suite both re-run clean.
+      FIND-026 (a false claim that FIND-012 was still open) found and corrected in place.
