@@ -16,7 +16,7 @@ risk_summary:
     must_fix: []
     monitor:
       - "FIND-013: internal/config tests fail in dev container due to env var leakage (LOG_LEVEL=DEBUG, required vars set at container level). Pre-existing isolation issue, not introduced by this story."
-      - "FIND-012 carried forward: inline 'story 2.4' comment references instead of TODO(spydemon) format — pre-existing, low priority"
+      - "FIND-012 carried forward: inline 'story 2.4' comment references instead of TODO(hagnerk) format — pre-existing, low priority"
       - "FIND-001, FIND-002, FIND-004, FIND-010, FIND-011 carried forward — all deferred to story 2.4 or future stories"
 
 quality_score: 100
@@ -48,7 +48,7 @@ recommendations:
   future:
     - action: "FIND-013: Fix internal/config test isolation — tests should run with a clean env, not inherit container runtime vars. Consider t.Setenv() cleanup or a dedicated test container without app env vars."
       refs: ["internal/config/config_test.go"]
-    - action: "FIND-012: Replace 'story 2.4' inline comment references with // TODO(spydemon): format per coding-standards.md#comments"
+    - action: "FIND-012: Replace 'story 2.4' inline comment references with // TODO(hagnerk): format per coding-standards.md#comments"
       refs: ["cmd/mqtt2bdd/main.go:23", "cmd/mqtt2bdd/main.go:63"]
     - action: "Address FIND-001 (defer Close/Disconnect unreachable via select{}) and FIND-002 (context.Background() no timeout in DB Connect)"
       refs: ["cmd/mqtt2bdd/main.go"]

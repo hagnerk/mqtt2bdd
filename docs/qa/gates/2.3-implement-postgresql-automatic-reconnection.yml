@@ -46,7 +46,7 @@ nfr_validation:
 recommendations:
   immediate: []
   future:
-    - action: "FIND-012: Replace 'story 2.4' inline comment references with // TODO(spydemon): format per coding-standards.md#comments"
+    - action: "FIND-012: Replace 'story 2.4' inline comment references with // TODO(hagnerk): format per coding-standards.md#comments"
       refs: ["cmd/mqtt2bdd/main.go:24", "cmd/mqtt2bdd/main.go:75"]
     - action: "Address FIND-001 (defer Close/Disconnect unreachable via select{}) and FIND-002 (context.Background() no timeout in DB Connect)"
       refs: ["cmd/mqtt2bdd/main.go"]

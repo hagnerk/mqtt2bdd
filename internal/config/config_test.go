@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/spydemon/mqtt2bdd/internal/config"
+	"github.com/hagnerk/mqtt2bdd/internal/config"
 )
 
 func TestLoadConfig(t *testing.T) {

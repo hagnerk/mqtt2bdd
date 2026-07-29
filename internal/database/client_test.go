@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spydemon/mqtt2bdd/internal/config"
-	"github.com/spydemon/mqtt2bdd/internal/database"
-	"github.com/spydemon/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/config"
+	"github.com/hagnerk/mqtt2bdd/internal/database"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
 )
 
 // *pgxpool.Pool is a concrete struct, not an interface, so it cannot be faked

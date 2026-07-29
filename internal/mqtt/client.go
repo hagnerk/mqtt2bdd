@@ -11,8 +11,8 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/spydemon/mqtt2bdd/internal/config"
-	"github.com/spydemon/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/config"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
 )
 
 const (

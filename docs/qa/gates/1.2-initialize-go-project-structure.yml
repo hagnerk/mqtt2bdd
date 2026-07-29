@@ -40,7 +40,7 @@ nfr_validation:
     status: PASS
     notes: >
       Godoc comments on all four package placeholder files. Module path
-      consistent with Story 1.1 agreement (github.com/spydemon/mqtt2bdd).
+      consistent with Story 1.1 agreement (github.com/hagnerk/mqtt2bdd).
       go.sum absence documented and expected.
 
 recommendations:

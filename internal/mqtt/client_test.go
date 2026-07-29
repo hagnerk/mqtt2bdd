@@ -9,7 +9,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 
-	"github.com/spydemon/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
 )
 
 // This file hand-writes fakes for mqtt.Client and mqtt.Token instead of using a

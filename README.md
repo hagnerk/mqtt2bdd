@@ -128,7 +128,7 @@ mqtt2bdd/
 ├── Dockerfile                           # Production multi-stage build
 ├── docker-compose.prod.yml              # Production deployment stack (app + postgres + mosquitto)
 ├── .env.prod.example                    # Production env template (no real values)
-├── go.mod / go.sum                      # Module: github.com/spydemon/mqtt2bdd
+├── go.mod / go.sum                      # Module: github.com/hagnerk/mqtt2bdd
 └── README.md
 ```
 

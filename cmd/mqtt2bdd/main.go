@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spydemon/mqtt2bdd/internal/config"
-	"github.com/spydemon/mqtt2bdd/internal/database"
-	"github.com/spydemon/mqtt2bdd/internal/logger"
-	"github.com/spydemon/mqtt2bdd/internal/mqtt"
+	"github.com/hagnerk/mqtt2bdd/internal/config"
+	"github.com/hagnerk/mqtt2bdd/internal/database"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/mqtt"
 )
 
 // defaultRetryIntervalOnDatabaseFailure is the delay between insert retries in the DB writer goroutine.

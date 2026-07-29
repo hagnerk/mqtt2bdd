@@ -32,7 +32,7 @@ evidence:
     - ac: 3
       note: "Architecture diagram and narrative independently checked against cmd/mqtt2bdd/main.go in full: three application goroutines (main, dbWriterLoop, healthCheckLoop) plus the Paho-managed callback, one buffered channel (BUFFER_SIZE), backpressure via the blocking select in the message handler, health-check observe-only behaviour. All confirmed accurate. See DOC-001 for a non-blocking wording nit in the diagram's own annotation."
     - ac: 4
-      note: "Project Structure independently checked against a live `find . -maxdepth 3`: no pkg/, scripts/, Makefile, .github/, or LICENSE (all confirmed genuinely absent); module path github.com/spydemon/mqtt2bdd confirmed against go.mod:1, never the stale github.com/username/mqtt2bdd (grepped, zero matches)."
+      note: "Project Structure independently checked against a live `find . -maxdepth 3`: no pkg/, scripts/, Makefile, .github/, or LICENSE (all confirmed genuinely absent); module path github.com/hagnerk/mqtt2bdd confirmed against go.mod:1, never the stale github.com/username/mqtt2bdd (grepped, zero matches)."
     - ac: 5
       note: "Prerequisites section states Docker/Docker Compose as the only hard requirement and Go 1.23+ as optional, matching docs/architecture/tech-stack.md's version figures (Go ~1.23.6, Compose ~5.1.2)."
     - ac: 6

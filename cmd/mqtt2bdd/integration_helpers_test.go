@@ -81,7 +81,7 @@ func buildTestBinary(t *testing.T) string {
 			return
 		}
 		testBinaryPath = dir + "/mqtt2bdd"
-		cmd := exec.Command("go", "build", "-o", testBinaryPath, "github.com/spydemon/mqtt2bdd/cmd/mqtt2bdd")
+		cmd := exec.Command("go", "build", "-o", testBinaryPath, "github.com/hagnerk/mqtt2bdd/cmd/mqtt2bdd")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			testBinaryErr = fmt.Errorf("go build: %w\n%s", err, out)

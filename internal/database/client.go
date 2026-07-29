@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/spydemon/mqtt2bdd/internal/config"
-	"github.com/spydemon/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/config"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
 )
 
 const (

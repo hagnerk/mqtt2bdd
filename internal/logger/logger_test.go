@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spydemon/mqtt2bdd/internal/logger"
+	"github.com/hagnerk/mqtt2bdd/internal/logger"
 )
 
 // fieldValue extracts the value of a key=value field from a slog TextHandler line.

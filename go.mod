@@ -1,4 +1,4 @@
-module github.com/spydemon/mqtt2bdd
+module github.com/hagnerk/mqtt2bdd
 
 go 1.23
 
