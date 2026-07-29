@@ -1,0 +1,280 @@
+# Release workflow: a pushed version tag produces downloadable binaries for four platforms.
+#
+# The whole point of this file is that cutting a release is `git tag vX.Y.Z && git push --tags`
+# and never a manual `go build`. Everything below exists to make that one command safe: the
+# quality gates run first and block the rest, the binaries are built with exactly the flags the
+# production Dockerfile uses, and the archives are named so that both a pinned URL and a
+# "latest" URL can serve them.
+
+name: Release
+
+on:
+  push:
+    tags:
+      # Only tag pushes trigger this workflow. Deliberately no `branches:` and no
+      # `workflow_dispatch:` — a release must correspond to a tag, so there is no way to
+      # publish one without creating the tag that names it.
+      #
+      # Why this glob also matches pre-releases: GitHub's tag filter treats `*` as matching any
+      # run of characters except `/`, so the final `*` absorbs the whole `0-rc1` in
+      # `v0.9.0-rc1`. That is intentional — the pre-release rehearsal (see the README's release
+      # section) runs through this same workflow, which is the only way to rehearse it honestly.
+      - 'v*.*.*'
+
+# The only permission this workflow needs, and the only one it gets. `contents: write` is what
+# `gh release create` requires to create a release and upload assets. Declaring it explicitly
+# means the workflow does not silently inherit whatever the repository's default token
+# permissions happen to be — if that default is ever tightened, this file still works; if it is
+# ever loosened, this file does not quietly gain reach it never asked for.
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------------------------------
+  # Job 1 of 3 — quality gates.
+  #
+  # Both other jobs `needs:` this one, so a failure here means no binary is built and no
+  # release is created. That dependency is the whole guarantee: it is structural, not a
+  # convention someone has to remember.
+  #
+  # These are the same four static/unit checks and the same integration script this project's
+  # contributors run locally, so a failure here is reproducible on a developer's machine. This
+  # is a publication gate, not a git hook: a failing gate leaves the pushed tag and its commits
+  # in place and blocks only the release. Recovering means fixing the problem, deleting the tag
+  # locally and remotely, and re-tagging.
+  # ---------------------------------------------------------------------------------------
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read the version from go.mod rather than hardcoding it here. A hardcoded version is
+          # a second place the Go version lives, and two places that must agree eventually do
+          # not.
+          go-version-file: go.mod
+
+      - name: Check formatting
+        # `gofmt -l` lists misformatted files and still exits 0, so a bare `gofmt -l .` step can
+        # never fail — it would be a gate that always passes, which is worse than no gate because
+        # it looks like coverage. The output has to be inspected explicitly.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        # Pinned to the same version dev/Dockerfile.dev installs. A CI gate running a different
+        # analyser version from the one developers run locally produces failures nobody can
+        # reproduce, which is how a quality gate turns into something people route around.
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.6.1
+          staticcheck ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Integration tests
+        # Run unmodified, from the repository root, exactly as the README documents it. The
+        # script is self-contained: it brings the isolated test/ stack up, waits for health,
+        # runs the //go:build integration suite, and tears everything down through a
+        # `trap cleanup EXIT` that fires on every exit path including failure.
+        #
+        # The timeout is here because the script's own failure modes are bounded (it gives up
+        # waiting for health after 90s) but Docker's are not — a hung image pull would otherwise
+        # sit until the six-hour default job timeout.
+        timeout-minutes: 20
+        run: ./test/run-integration-tests.sh
+
+  # ---------------------------------------------------------------------------------------
+  # Job 2 of 3 — cross-compile and package one archive pair per platform.
+  #
+  # Four matrix entries run in parallel, each producing two files: a canonical, version-bearing
+  # archive and a version-free alias. Both are uploaded as artifacts for the release job to
+  # collect.
+  # ---------------------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.name }}
+    needs: quality
+    runs-on: ubuntu-latest
+    strategy:
+      # Build every target even if one fails, so a single broken platform reports one failure
+      # rather than hiding the state of the other three.
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux_amd64,  goos: linux,  goarch: amd64 }
+          - { name: linux_arm64,  goos: linux,  goarch: arm64 }
+          # GOARCH=arm on its own defaults to ARMv6. GOARM=7 targets the ARMv7 instruction set,
+          # which is what 32-bit Raspberry Pi OS runs on — the reason this target exists at all.
+          - { name: linux_armv7,  goos: linux,  goarch: arm, goarm: '7' }
+          - { name: darwin_arm64, goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        # The flags are byte-for-byte the ones in the production Dockerfile, so a binary
+        # downloaded from a release and a binary built into the container image are the same
+        # binary:
+        #   CGO_ENABLED=0  no libc, no dynamic loader — the binary runs on any Linux with a
+        #                  matching kernel, which is what makes "download and run" true.
+        #                  It is also what makes cross-compilation need no toolchain here: pure
+        #                  Go cross-compiles from any host, cgo would not.
+        #   -s -w          strip the symbol table and DWARF data (measured at 13.7 MB -> 9.4 MB
+        #                  on this project).
+        #   -X main.Version  writes the version into cmd/mqtt2bdd/main.go's `var Version`, which
+        #                  the application logs on its very first line at startup.
+        #
+        # ${GITHUB_REF_NAME#v} strips one leading `v` from the tag name: v1.0.0 -> 1.0.0,
+        # v0.9.0-rc1 -> 0.9.0-rc1. POSIX prefix removal is used rather than a sed or tr deletion
+        # because those would also strip a `v` occurring elsewhere in the version.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Building ${{ matrix.name }} at version ${VERSION}"
+          mkdir -p stage
+          CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.Version=${VERSION}" \
+            -o stage/mqtt2bdd ./cmd/mqtt2bdd
+
+      - name: Package
+        # Each archive carries the binary plus the licence and the README, so an extracted
+        # archive is self-describing and legally complete without a visit back to the
+        # repository. Both files are checked rather than assumed: a missing LICENSE would
+        # otherwise ship silently in every archive of every release.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          test -f LICENSE   || { echo "LICENSE is missing"; exit 1; }
+          test -f README.md || { echo "README.md is missing"; exit 1; }
+          cp LICENSE README.md stage/
+          chmod +x stage/mqtt2bdd
+
+          CANONICAL="mqtt2bdd_${VERSION}_${{ matrix.name }}.tar.gz"
+          ALIAS="mqtt2bdd_${{ matrix.name }}.tar.gz"
+
+          # -C stage so the archive has no leading directory component: extracting it drops
+          # three files where the user is standing, which is what the install instructions
+          # assume.
+          tar -czf "${CANONICAL}" -C stage mqtt2bdd LICENSE README.md
+
+          # The alias is a COPY of the canonical archive, never a second `tar` invocation.
+          # This is the least obvious decision in this file, so here is the actual reasoning.
+          #
+          # A second `tar -czf` over the same inputs does, as it happens, produce identical
+          # bytes on today's toolchains — measured on GNU tar 1.35 / gzip 1.13 and on BusyBox
+          # tar, because gzip writes MTIME=0 when it compresses a stream rather than a named
+          # file, which is exactly what `tar -z` does. So this is not a bug being worked around.
+          #
+          # It is a contract being made unconditional. AC6 requires the pair to be
+          # byte-identical, and `cp` makes that true by construction — independent of which tar
+          # and gzip the runner image ships next year, of directory read order, and of anything
+          # a future change to this step might introduce. Relying on two compressions agreeing
+          # would make a published checksum depend on an implementation detail nobody would
+          # think to re-check. The checksum step below asserts the outcome (8 lines, 4 distinct
+          # hashes), so a regression here fails the release rather than reaching a user whose
+          # verification then fails.
+          #
+          # Why the alias exists at all: the releases/latest/download/<name> URL requires an
+          # asset name that does not change between releases, so it cannot contain a version.
+          # The canonical name exists for the opposite reason — a downloaded file should state
+          # on disk which version it holds.
+          cp "${CANONICAL}" "${ALIAS}"
+
+          ls -l "${CANONICAL}" "${ALIAS}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archives-${{ matrix.name }}
+          path: mqtt2bdd_*.tar.gz
+          # These are the release payloads; a failed upload must fail the job rather than
+          # produce a release that is quietly missing a platform.
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------------------
+  # Job 3 of 3 — checksums and the GitHub Release.
+  #
+  # `needs:` names the quality job as well as the build job. The dependency is already
+  # transitive, but stating it here makes the guarantee readable at the point it matters: this
+  # job cannot run unless the gates passed.
+  # ---------------------------------------------------------------------------------------
+  release:
+    name: Publish release
+    needs: [quality, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          # merge-multiple flattens all four per-target artifacts into one directory, so the
+          # checksum step can see all eight archives at once.
+          pattern: archives-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        # `sha256sum` already emits exactly the format `sha256sum -c` reads back (hash, two
+        # spaces, filename), so nothing is reformatted here. Sorted for a stable, reviewable
+        # file.
+        #
+        # The assertion is the point of this step, not the file: eight lines and four distinct
+        # hashes is the proof that each alias really is byte-identical to its canonical
+        # counterpart. If the `cp` in the packaging step were ever replaced by a second `tar`,
+        # this is where it would be caught — before anything is published, rather than by a
+        # user whose checksum verification fails.
+        run: |
+          sha256sum *.tar.gz | sort > checksums.txt
+          cat checksums.txt
+
+          lines=$(wc -l < checksums.txt)
+          distinct=$(awk '{print $1}' checksums.txt | sort -u | wc -l)
+          if [ "$lines" -ne 8 ] || [ "$distinct" -ne 4 ]; then
+            echo "Expected 8 archives with 4 distinct hashes; got ${lines} lines, ${distinct} distinct."
+            exit 1
+          fi
+
+      - name: Create release
+        env:
+          # The automatically provided token, and nothing else. This workflow needs no
+          # repository secret; if it ever appears to, that is a signal the approach is wrong
+          # rather than a reason to add a personal access token.
+          GH_TOKEN: ${{ github.token }}
+        # `gh` is preinstalled on GitHub runners, so creating the release with it adds nothing
+        # to the supply chain of a workflow whose entire output is artefacts other people
+        # download and run. A third-party action would be a few lines shorter and one more
+        # dependency to audit.
+        #
+        # --prerelease is set when the version contains a `-`. Semver defines everything after
+        # the first hyphen as the pre-release identifier, so this test is exact rather than a
+        # guess at which suffixes exist, and it covers -rc, -beta, -alpha and anything else
+        # without enumerating them. The consequence is what matters: a pre-release never
+        # becomes the target of releases/latest/download/..., so a release candidate's
+        # version-free aliases are never served to somebody who asked for "latest".
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PRERELEASE=""
+          case "${VERSION}" in
+            *-*) PRERELEASE="--prerelease" ;;
+          esac
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            ${PRERELEASE} \
+            dist/*.tar.gz dist/checksums.txt
