@@ -1,6 +1,6 @@
 # MQTT2BDD
 
-![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white)
+![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?logo=go&logoColor=white) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ## Overview
 
@@ -69,9 +69,11 @@ graceful shutdown — patterns worth studying whether or not you ever deploy it.
                     │   sensor_metrics      │
                     └─────────────────────┘
 
-  Main goroutine: initializes config/logger/mqtt/database, starts the two
-  goroutines above plus a third (Health Check, below), then blocks on
-  SIGTERM/SIGINT and coordinates the drain-then-exit shutdown sequence.
+  Main goroutine: initializes config/logger/mqtt/database, starts the DB Writer
+  goroutine above plus a second one (Health Check, below), then blocks on
+  SIGTERM/SIGINT and coordinates the drain-then-exit shutdown sequence. The MQTT
+  Client box above is the Paho library's own callback goroutine, not one main()
+  starts itself.
 
   Health Check goroutine: every 60s, reads channel length/capacity and both
   clients' connection status (no writes, no sends) and logs one status line;
@@ -162,7 +164,7 @@ This project targets Go ~1.23.6 and Docker Compose ~5.1.2.
 Clone the repository and start the development stack:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/hagnerk/mqtt2bdd.git
 cd mqtt2bdd/dev
 cp .env.example .env
 docker compose up --build
@@ -461,3 +463,7 @@ Curated, official/canonical links related to the technologies and patterns this 
 
 - [Docker Compose documentation](https://docs.docker.com/compose/) — official documentation
   for the `docker compose` command this project's entire workflow depends on.
+
+## License
+
+MQTT2BDD is released under the MIT License. See [LICENSE](LICENSE) for the full text.
