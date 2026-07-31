@@ -1,0 +1,161 @@
+schema: 1
+story: '4.4'
+story_title: 'Document Binary Installation from a GitHub Release'
+gate: CONCERNS
+status_reason: >-
+  Ten of eleven ACs met and independently re-verified; AC10 is met on 11 of its 13 claims, with the
+  two exceptions precisely stated rather than glossed. The documented commands were run rather than
+  reviewed, all eight archive names were matched against the workflow by script in both directions,
+  and every claim the README makes about the release workflow was cross-checked against
+  .github/workflows/release.yml. One genuine user-facing defect found and fixed during review
+  (DOC-002): every command after the Download subsection silently assumed the pinned download path,
+  so a reader who followed the documented "latest" URL was sent to the wrong release's checksums.txt
+  and given filenames they did not have. The gate is CONCERNS because AC10's URL-resolution half
+  remains unverifiable under PUB-001, not because of the quality of what was delivered.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-07-31T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'PUB-003'
+    severity: medium
+    finding: >-
+      AC10 is met in part. Eleven of its thirteen claims were verified by execution; two cannot be:
+      that releases/download/<tag>/<name> and releases/latest/download/<name> actually serve (and
+      that latest follows the newest non-pre-release, which additionally needs two releases to
+      exist), and that a downloaded macOS binary carries the Gatekeeper quarantine attribute. Both
+      are blocked by PUB-001. The URLs are correct by construction — repository path from go.mod,
+      filenames script-matched against the workflow — but correct-by-construction is not fetched.
+    suggested_owner: maintainer
+    refs: ['docs/stories/4.4.story.md#ac10-what-was-verified-and-what-was-not']
+
+resolved_issues:
+  - id: 'DOC-002'
+    severity: medium
+    finding: >-
+      User-facing, and the kind of defect that only appears when the section is read as a sequence
+      rather than as parts. The Download subsection documents two paths, pinned and latest, and says
+      the choice matters. Every subsequent command then assumed the pinned path: Verify told the
+      reader to fetch checksums.txt from the hardcoded v1.2.3 release, and Verify, the BusyBox
+      fallback and Extract all named mqtt2bdd_1.2.3_linux_amd64.tar.gz. A reader who followed the
+      latest URL holds mqtt2bdd_linux_amd64.tar.gz and would have fetched a checksum file from a
+      different release — producing a verification failure that looks like a corrupted download.
+      AC1's promise is copy-pasteable instructions; for one of the two documented paths they were not.
+    resolution: >-
+      Verify now gives both checksums.txt URLs, states explicitly that it must come from the same
+      release as the archive, shows both expected OK lines, and explains why either download
+      verifies without knowing about the other — checksums.txt lists every archive under both its
+      canonical and its alias name, and the pair is byte-identical so it shares one hash. Extract
+      gained a substitute-your-filename sentence. The premise was verified by reproduction, not
+      asserted: a release was rebuilt locally and a latest-path user simulated with only the alias
+      archive present; verification printed "mqtt2bdd_linux_amd64.tar.gz: OK" and exited 0. Worth
+      noting that Story 4.3 AC8 designed for exactly this ("the file lists both names so that either
+      download can be verified without knowing about the other") — the capability was already there
+      and the README simply failed to use it.
+    verified_by: 'Quinn (Test Architect), 2026-07-31'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 2, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        PUB-003: AC10's URL-resolution half. The first real test is the maintainer following the
+        README's own commands against the published release.
+
+quality_score: 80
+expires: '2026-08-14T00:00:00Z'
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
+    ac_partial: [10]
+    ac_gaps: []
+    ac_partial_reason: >-
+      AC10 verified on 11 of 13 claims by execution; URL resolution and the Gatekeeper attribute on a
+      downloaded file are blocked by PUB-001 and are reported as unverified rather than folded into a
+      blanket claim.
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      The checksum guidance is correctly scoped: the README states that a matching checksum shows the
+      download is complete and uncorrupted and explicitly does NOT claim it is a signature or proves
+      authorship. Overstating what a checksum gives you is the common failure in install docs and it
+      was avoided deliberately. The macOS-unsigned reality is stated plainly with the quarantine
+      command, rather than left for the user to discover through a dialog that says the file is
+      damaged. No credential, endpoint or permission is introduced.
+  performance:
+    status: PASS
+    notes: 'Not applicable — documentation only. Coherence build clean.'
+  reliability:
+    status: PASS
+    notes: >-
+      The documented commands were executed, not reviewed. The jq release-selection pipeline was
+      validated against a payload built to break it (a newer major, a 1.x pre-release, two 1.x
+      releases) and selected correctly. All four uname -m values were confirmed on real platforms
+      rather than assumed. The BusyBox claim was verified as a negative first — the option really is
+      rejected — before the fallback was documented.
+  maintainability:
+    status: PASS
+    notes: >-
+      All eight archive names matched against the workflow by script in both directions, so the
+      README cannot name an archive the workflow does not build nor omit one it does. This is the
+      right check for a table of near-identical filenames. The release subsection documents how to
+      use the workflow and deliberately not its internals, which are commented in the workflow file
+      itself — the correct division. The Prerequisites contradiction this story would otherwise have
+      introduced was found at draft time and fixed at the correct clause.
+
+recommendations:
+  immediate:
+    - action: >-
+        PUB-003 (maintainer): after PUB-001 and PUB-002, walk the README's Installation section
+        end to end against the real release — both the pinned and the latest path, since DOC-002
+        showed the two diverge in ways only a sequential read catches.
+      refs: ['README.md']
+  future:
+    - action: >-
+        REL-001 (gate 3.3) ends Epic 4 unowned. It needs a behavioural change in healthCheckLoop and
+        no Epic 4 story touches Go source. Not actionable today.
+      refs: ['cmd/mqtt2bdd/main.go']
+
+carry_forward_register:
+  resolved:
+    - { id: 'FIND-010', originating_gate: '2.2', resolved_in: '3.3' }
+    - { id: 'FIND-012', originating_gate: '2.3', resolved_in: '2.4' }
+    - { id: 'FIND-016', originating_gate: 'pre-3.3', resolved_in: '3.3' }
+    - { id: 'FIND-019', originating_gate: '2.5', resolved_in: '3.6' }
+    - { id: 'FIND-020', originating_gate: '2.6', resolved_in: '3.6' }
+    - { id: 'FIND-021', originating_gate: '2.6', resolved_in: '3.4' }
+    - { id: 'FIND-026', originating_gate: '4.1', resolved_in: '4.1' }
+    - { id: 'DOC-001', originating_gate: '3.5', resolved_in: '4.2' }
+    - { id: 'STORY-3.5-AC13', originating_gate: '3.5', resolved_in: '4.2' }
+    - { id: 'TEST-001', originating_gate: '3.3', resolved_in: '4.3' }
+    - { id: 'CI-001', originating_gate: '4.3', resolved_in: '4.3' }
+    - { id: 'DOC-002', originating_gate: '4.4', resolved_in: '4.4' }
+  open:
+    - { id: 'PUB-001', originating_gate: '4.2', owner: 'maintainer', reason: 'Story 4.2 ACs 6/7/8/10 — create the public repository and push. Irreversible; reserved to the owner. Runbook in story 4.2.' }
+    - { id: 'PUB-002', originating_gate: '4.3', owner: 'maintainer', reason: 'Story 4.3 AC12 — the v0.9.0-rc1 rehearsal. Blocked by PUB-001. Runbook in story 4.3.' }
+    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10 — URL resolution and the Gatekeeper attribute. Blocked by PUB-001. 11 of 13 claims already verified.' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'mqtt_status cannot distinguish a permanently-failing re-subscribe from a transient one. Needs a healthCheckLoop change; no Epic 4 story touches Go source. Ends the epic unowned.' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, not a defect and not a story. Re-assessed at publication in story 4.2 and left unchanged.' }
+  register_status: >-
+    Clean at the close of Epic 4. Every finding raised across all four epics is either resolved with a
+    named resolving story, or is one of three maintainer-owned publication dependencies (PUB-001,
+    PUB-002, PUB-003, the second and third blocked by the first), or is REL-001, which ends the epic
+    unowned and not actionable, or the broker-authentication accepted risk. Nothing is ambiguous,
+    silently dropped, or falsely marked resolved. This is a statement about Epic 4, not a claim that
+    no further epic will exist.
+
+history:
+  - at: '2026-07-31T00:00:00Z'
+    gate: CONCERNS
+    note: >-
+      Last story of Epic 4. Ten of eleven ACs verified, AC10 met on 11 of 13 claims with the two
+      exceptions stated precisely. DOC-002 found and fixed during review — a user-facing defect where
+      the documented latest download path was abandoned by every command that followed it.

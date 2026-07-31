@@ -214,11 +214,27 @@ curl -LO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/mqtt2bdd_l
 
 ### Verify the download
 
+Fetch `checksums.txt` **from the same release you downloaded the archive from** — a checksum file
+from a different version will not match anything you have:
+
 ```bash
+# If you took the pinned URL above:
 curl -LO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/checksums.txt
-sha256sum --ignore-missing -c checksums.txt
-# mqtt2bdd_1.2.3_linux_amd64.tar.gz: OK
+
+# If you took the latest URL above:
+curl -LO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/checksums.txt
 ```
+
+Then verify, naming whichever archive you actually downloaded:
+
+```bash
+sha256sum --ignore-missing -c checksums.txt
+# mqtt2bdd_1.2.3_linux_amd64.tar.gz: OK      <- pinned download
+# mqtt2bdd_linux_amd64.tar.gz: OK            <- latest download
+```
+
+Either works without you having to know about the other: `checksums.txt` lists every archive under
+**both** its canonical and its alias name, and the two are byte-identical, so they share a checksum.
 
 `--ignore-missing` is not optional here. `checksums.txt` lists all eight archives — four platforms
 under two names each — and you have downloaded one. Without the flag, `sha256sum` reports seven
@@ -236,6 +252,9 @@ A matching checksum tells you the download is complete and uncorrupted. It is no
 proves nothing about who produced the file.
 
 ### Extract and run
+
+Substitute the archive name you downloaded — `mqtt2bdd_linux_amd64.tar.gz` if you took the latest
+URL. The contents are identical either way:
 
 ```bash
 tar -xzf mqtt2bdd_1.2.3_linux_amd64.tar.gz
