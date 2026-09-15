@@ -3,14 +3,13 @@ story: '4.3'
 story_title: 'Automate Cross-Platform Binary Builds on Tag'
 gate: PASS
 status_reason: >-
-  All fourteen ACs are now met. AC12, open under PUB-002 since 2026-07-29, was verified against the
-  live rehearsal the maintainer ran on 2026-07-31: workflow run 30624610132 succeeded on its first
-  attempt with every job and step green, including the integration suite and its teardown; the
-  prerelease carries the nine expected assets; all eight archives verify against checksums.txt with
-  four distinct hashes; and the extracted linux/amd64 binary logs event=starting with the injected
-  version. The rehearsal ran on v0.0.9-rc1 rather than the v0.9.0-rc1 the AC names (REQ-001, low); no
-  assertion depends on the digits. One low CI item (CI-002): four actions target the deprecated
-  Node.js 20 runtime.
+  All fourteen ACs are met. AC12 was verified against the maintainer's 2026-07-31 rehearsal, and the
+  workflow has since been re-proven on a runner: the v0.0.9-rc2 run (35008908643) exercised the
+  Node.js 24 action majors end to end with zero deprecation warnings, Go resolved to go1.23.12 under
+  GOTOOLCHAIN=local, the new artifact digest check active, nine assets, all checksums verified, and
+  the released binaries reporting the injected version. CI-002 is resolved. One low item remains
+  (REQ-001): both rehearsals used a v0.0.9-rcN tag rather than the v0.9.0-rc1 AC12 names, which
+  is the PO's to accept.
 reviewer: 'Quinn (Test Architect)'
 updated: '2026-09-15T00:00:00Z'
 
@@ -21,42 +20,39 @@ top_issues:
     severity: low
     finding: >-
       AC12 names the rehearsal tag v0.9.0-rc1 and the expected log line version=0.9.0-rc1. The
-      maintainer rehearsed on v0.0.9-rc1, so the release, the archive names and the logged version
-      all read 0.0.9-rc1. Every one of AC12's four assertions holds with that version substituted,
-      the tag carries the pre-release suffix the rehearsal exists to exercise, and no v1.0.0 exists
-      yet, so "before v1.0.0 is tagged" holds too. The deviation is in the literal tag only. It is
-      recorded rather than silently read as equivalent, because this project does not reinterpret
-      ACs. Side effect: v0.0.9-rc1 is now a permanent module version on proxy.golang.org, and @latest
-      resolves to it until a release version exists; harmless, not reversible.
+      maintainer rehearsed on v0.0.9-rc1 (2026-07-31) and again on v0.0.9-rc2 (2026-09-15), so every
+      release, archive name and logged version reads 0.0.9-rcN. Every one of AC12's four assertions
+      holds with that version substituted, both tags carry the pre-release suffix the rehearsal
+      exists to exercise, and no v1.0.0 exists yet. The deviation is in the literal tag only, and it
+      is now a consistent choice rather than a slip. It is recorded rather than silently read as
+      equivalent, because this project does not reinterpret ACs. Side effect: v0.0.9-rc1 is a
+      permanent module version on proxy.golang.org; harmless, not reversible.
     suggested_action: >-
-      PO to record in a post-publication validation that AC12 is accepted with v0.0.9-rc1 in place
-      of v0.9.0-rc1. A second rehearsal only to match the literal tag is not recommended on its own
-      (release.yml is byte-identical to the rehearsed version), but see CI-002: if the actions are
-      bumped before v1.0.0, a fresh rc rehearsal is warranted anyway and can use v0.9.0-rc1.
+      PO to record in a post-publication validation that AC12 is accepted with the v0.0.9-rcN
+      rehearsals in place of v0.9.0-rc1. No further rehearsal is needed for the workflow's sake:
+      rc2 already validated the current release.yml on a runner.
     suggested_owner: po
     refs: ['docs/stories/4.3.story.md#post-publication-re-review-2026-09-15']
+
+resolved_issues:
   - id: 'CI-002'
     severity: low
     finding: >-
-      Every job in run 30624610132 emitted "Node.js 20 is deprecated": actions/checkout@v4,
-      actions/setup-go@v5, actions/upload-artifact@v4 and actions/download-artifact@v4 target Node.js
-      20 and are being forced onto Node.js 24 by the runner. The run succeeded, so this is not a
-      defect today. It has the same shape as CI-001: the workflow depends on runner behaviour it does
-      not control, and the only place a change would surface is a tagged release run.
-    suggested_action: >-
-      Before tagging v1.0.0, move each action to its current major that targets Node.js 24 (check
-      each action's release notes rather than guessing numbers), then rehearse again on an rc tag,
-      since changing the actions invalidates the part of the rehearsal that validated the runner
-      environment.
-    suggested_owner: dev
-    status: >-
-      Fix applied locally on 2026-09-15, at the maintainer's request: checkout@v7, setup-go@v7,
-      upload-artifact@v7, download-artifact@v8, all declaring node24. Each major's release notes
-      were read against this workflow's usage; no breaking change applies (details in the story's
-      QA Results). Stays open until an rc rehearsal proves the new actions on a real runner.
-    refs: ['.github/workflows/release.yml']
-
-resolved_issues:
+      Every job in run 30624610132 (v0.0.9-rc1) emitted "Node.js 20 is deprecated":
+      actions/checkout@v4, actions/setup-go@v5, actions/upload-artifact@v4 and
+      actions/download-artifact@v4 targeted Node.js 20 and were forced onto Node.js 24 by the runner.
+      Same shape as CI-001: a dependency on runner behaviour the workflow does not control.
+    resolution: >-
+      release.yml moved to checkout@v7, setup-go@v7, upload-artifact@v7 and download-artifact@v8,
+      each major's runtime read from its action.yml (node24) and each crossed major's release notes
+      checked against the workflow's usage (committed in 698235b). Proven on a runner by the
+      v0.0.9-rc2 run 35008908643: attempt 1, all six jobs and every step success, steps named with
+      the new majors, zero "Node.js 20" lines in the log and zero check-run annotations on any job;
+      setup-go resolved spec 1.23 to go1.23.12 with GOTOOLCHAIN=local, and the Staticcheck install
+      succeeded under it; download-artifact ran with digest-mismatch: error and expected digests
+      listed. The released binaries still report go1.23.12, so the action bump changed nothing in
+      the artefacts' toolchain.
+    verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'PUB-002'
     severity: medium
     finding: >-
@@ -79,7 +75,8 @@ resolved_issues:
       Changed to invoke the absolute path, "$(go env GOPATH)/bin/staticcheck" ./..., with the
       reasoning in a comment. Costs nothing and removes the dependency on undocumented runner
       behaviour for a gate whose whole purpose is to block bad releases. Workflow re-parsed clean
-      after the edit. Confirmed on a real runner on 2026-07-31: the Staticcheck step succeeded.
+      after the edit. Confirmed on a real runner on 2026-07-31 and again on 2026-09-15 under
+      setup-go@v7: the Staticcheck step succeeded both times.
     verified_by: 'Quinn (Test Architect), 2026-07-29; re-confirmed 2026-09-15'
   - id: 'TEST-001'
     severity: low
@@ -98,14 +95,12 @@ resolved_issues:
     verified_by: 'Quinn (Test Architect), 2026-07-29'
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 0, low: 2 }
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
   recommendations:
     must_fix: []
     monitor:
       - >-
-        CI-002: bump the Node.js 20 actions and re-rehearse on an rc tag before v1.0.0.
-      - >-
-        REQ-001: PO acceptance of the v0.0.9-rc1 substitution.
+        REQ-001: PO acceptance of the v0.0.9-rcN substitution for AC12's v0.9.0-rc1.
 
 quality_score: 100
 expires: '2026-09-29T00:00:00Z'
@@ -154,8 +149,30 @@ evidence:
         event=starting version=0.0.9-rc1 as its first line (the linux/arm64 binary, run natively,
         logs the same). No v1.0.0 tag exists. Tag deviation: REQ-001.
       workflow_identity: >-
-        .github/workflows/release.yml has the same blob (ed904a3) at 4496553, the rehearsed commit,
-        and at HEAD, so the rehearsal validated the file as it stands.
+        .github/workflows/release.yml had the same blob (ed904a3) at 4496553, the rehearsed commit,
+        and at HEAD on the morning of 2026-09-15, before CI-002's fix.
+    re_verification_rc2_2026_09_15:
+      commit_and_workflow: >-
+        Tag v0.0.9-rc2 (annotated) -> 698235b, also GitHub's main. release.yml at 698235b differs
+        from the rc1 version only in its uses: lines and comments; no functional line changed.
+      run: >-
+        Run 35008908643, event push, attempt 1, 18:40:13Z -> 18:44:30Z, runner image ubuntu24
+        20260907.300. Six jobs success, every step success, steps named checkout@v7, setup-go@v7,
+        upload-artifact@v7, download-artifact@v8. "Node.js 20" occurrences in the full log: 0.
+        Check-run annotations on all six jobs: none. setup-go: "Setup go version spec 1.23" ->
+        go1.23.12, GOTOOLCHAIN=local. download-artifact: digest-mismatch: error, expected digests
+        listed per artifact. Integration suite passed; test containers and network removed.
+      release_and_assets: >-
+        v0.0.9-rc2: prerelease true, created by github-actions[bot], generated notes comparing
+        v0.0.9-rc1...v0.0.9-rc2. Nine assets; API digests pair canonical and alias; checksums.txt in
+        the log identical to the published file; `sha256sum -c` in go-dev: 8 OK, 4 distinct hashes.
+      binaries: >-
+        All four: go1.23.12, CGO_ENABLED=0, -ldflags="-s -w -X main.Version=0.0.9-rc2",
+        vcs.revision 698235b, with GOOS/GOARCH (and GOARM=7) per target. Archives hold mqtt2bdd
+        (-rwxr-xr-x), LICENSE and README.md, both identical to 698235b. linux_amd64 under `env -i`
+        with required variables and an unreachable broker logs event=starting version=0.0.9-rc2,
+        then startup_aborted.
+      ac10: 'GET releases/latest and the latest alias URL still return 404: two pre-releases, no release.'
 
 nfr_validation:
   security:
@@ -163,33 +180,35 @@ nfr_validation:
     notes: >-
       Confirmed on the live repository rather than from the file: no repository secret, no variable,
       no environment. The default token is read-only and the workflow's explicit contents:write was
-      sufficient and necessary. The release was authored by github-actions[bot], so what users
-      download is what the gated workflow built. First-party actions only.
+      sufficient and necessary. Releases are authored by github-actions[bot]. First-party actions
+      only, now on their Node.js 24 majors; download-artifact@v8 additionally fails the run on an
+      artifact digest mismatch, which protects what gets hashed and published.
   performance:
     status: PASS
     notes: >-
-      Whole run 4m21s (10:44:54Z -> 10:49:15Z): quality gates 3m17s, the four builds in parallel in
-      about 40s, publication 10s.
+      rc1 run 4m21s, rc2 run 4m17s: quality gates about 3m20s, four parallel builds about 30s,
+      publication about 15s. The action bump did not change the run's shape.
   reliability:
     status: PASS
     notes: >-
-      The gate ordering held on a real runner; the integration suite passed on GitHub's Docker and
-      tore its stack down. CI-002 is the one runner-dependency left to address before v1.0.0.
+      Gate ordering held on a real runner twice. With CI-002 resolved, the workflow no longer
+      depends on the runner forcing deprecated actions onto a newer runtime.
   maintainability:
     status: PASS
-    notes: 'Unchanged since the 2026-07-29 review; release.yml is byte-identical to the rehearsed version.'
+    notes: >-
+      Three comments added with the bump (why Node.js 24 majors, what GOTOOLCHAIN=local changes,
+      why the digest check stays at its default), consistent with the file's educational standard.
 
 recommendations:
   immediate: []
   future:
     - action: >-
-        CI-002 then a fresh rc rehearsal before v1.0.0; that rehearsal can use v0.9.0-rc1 and makes
-        REQ-001 moot for the record going forward.
+        REQ-001: PO acceptance, then tag v1.0.0 when ready. The workflow at 698235b is the version
+        rehearsed on a runner; any further change to release.yml warrants another rc.
       refs: ['.github/workflows/release.yml']
     - action: >-
         For Story 4.4 (PUB-003): releases/latest/download/... URLs return 404 and will keep doing so
-        until a non-prerelease exists, which is AC10 of this story working as designed. The README's
-        "latest" install URLs cannot resolve before v1.0.0 is published.
+        until a non-prerelease exists, which is AC10 of this story working as designed.
       refs: ['docs/qa/gates/4.4-document-binary-installation.yml']
     - action: >-
         REL-001 (gate 3.3) is unchanged and still unowned.
@@ -210,17 +229,17 @@ carry_forward_register:
     - { id: 'CI-001', originating_gate: '4.3', resolved_in: '4.3' }
     - { id: 'PUB-001', originating_gate: '4.2', resolved_in: '4.2', resolved_on: '2026-09-15' }
     - { id: 'PUB-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15' }
+    - { id: 'CI-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15', note: 'Proven on a runner by the v0.0.9-rc2 run 35008908643.' }
   open:
     - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
-    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1; substance met, PO acceptance to record.' }
-    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Actions bumped to Node.js 24 majors on 2026-09-15 (checkout@v7, setup-go@v7, upload-artifact@v7, download-artifact@v8); open until an rc rehearsal proves them on a runner.' }
-    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10; unblocked by PUB-001, not re-assessed in this update. latest URLs need a non-prerelease.' }
+    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 and v0.0.9-rc2 instead of v0.9.0-rc1; substance met, PO acceptance to record.' }
+    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10; latest URLs need a non-prerelease (v1.0.0). See gate 4.4, whose register is the most recent.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, re-assessed at publication in Story 4.2 and left unchanged' }
   register_status: >-
-    PUB-001 and PUB-002 leave the register. Three low items are open (TEST-002, REQ-001, CI-002),
-    none blocking. PUB-003 remains open pending the re-review of gate 4.4.
+    PUB-001, PUB-002 and CI-002 leave the register. Two low items remain open (TEST-002, REQ-001),
+    neither blocking, plus PUB-003 which belongs to gate 4.4.
 
 history:
   - at: '2026-07-29T00:00:00Z'
@@ -243,3 +262,10 @@ history:
       CI-002 fix applied to release.yml the same day (Node.js 24 majors), release notes reviewed
       against the workflow's usage. Gate unchanged; CI-002 stays open pending an rc rehearsal,
       because the rehearsal of record validated the previous action versions.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      v0.0.9-rc2 rehearsal (run 35008908643) verified: Node.js 24 majors ran with zero deprecation
+      warnings or annotations, Go still go1.23.12 under GOTOOLCHAIN=local, digest check active,
+      nine assets and all checksums verified, binaries carrying 0.0.9-rc2 and commit 698235b.
+      CI-002 resolved. REQ-001 stays open: the rehearsal tag is again v0.0.9-rcN.

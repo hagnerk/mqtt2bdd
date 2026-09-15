@@ -123,7 +123,8 @@ evidence:
     re_verification_2026_09_15:
       readme_identity: >-
         Before this review's fixes, README.md blob 95f2b28 was identical at 4496553 (the published
-        commit) and at HEAD. The fixes are local and unpublished until committed and pushed.
+        commit) and at HEAD. The fixes were published in 2808b65 (on GitHub's main) and ship inside
+        every v0.0.9-rc2 archive: the README.md in all four archives hashes identically to 698235b's.
       pinned_path: >-
         All nine releases/download/v0.0.9-rc1/<name> URLs return 200 with sizes matching the release
         assets. macOS host, in an empty directory holding one downloaded archive:
@@ -172,16 +173,12 @@ nfr_validation:
       that carries the dev configuration.
 
 recommendations:
-  immediate:
-    - action: >-
-        Commit and push the README fixes: until they are pushed, the public README still carries
-        DOC-003, DOC-004 and DOC-005.
-      refs: ['README.md']
+  immediate: []
   future:
     - action: >-
-        Suggested order before v1.0.0, combining open items across gates 4.3 and 4.4: bump the
-        Node.js 20 actions (CI-002), rehearse on v0.9.0-rc1 (settles REQ-001 going forward), tag
-        v1.0.0, then walk the latest path end to end to close PUB-003.
+        Remaining before PUB-003 can close: PO acceptance of REQ-001 (gate 4.3), tag v1.0.0, then
+        walk the latest path end to end, including the "follows the newest" behaviour once a second
+        release exists.
       refs: ['docs/qa/gates/4.3-automate-cross-platform-binary-builds.yml']
     - action: >-
         REL-001 (gate 3.3) remains unowned and not actionable.
@@ -206,11 +203,11 @@ carry_forward_register:
     - { id: 'DOC-003', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15' }
     - { id: 'DOC-004', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15' }
     - { id: 'DOC-005', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15' }
+    - { id: 'CI-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15', note: 'Proven on a runner by the v0.0.9-rc2 run 35008908643.' }
   open:
     - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10 — latest URL resolution and follows-newest behaviour. Now blocked by the absence of a non-pre-release (v1.0.0), no longer by PUB-001.' }
     - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation. Low.' }
     - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1. Low.' }
-    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Actions bumped to Node.js 24 majors on 2026-09-15; open until an rc rehearsal proves them on a runner. Low.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'mqtt_status cannot distinguish a permanently-failing re-subscribe from a transient one. Needs a healthCheckLoop change. Unowned and not actionable.' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, not a defect and not a story. Re-assessed at publication in story 4.2 and left unchanged.' }
@@ -235,3 +232,8 @@ history:
       configuration) and DOC-005 (low: xattr step failing after a curl download). All three were
       fixed in README.md at the maintainer's request the same day and re-verified by execution;
       quality score 80 -> 90.
+  - at: '2026-09-15T00:00:00Z'
+    gate: CONCERNS
+    note: >-
+      README fixes published (2808b65 on main) and shipped in every v0.0.9-rc2 archive. CI-002
+      resolved in gate 4.3 by the rc2 run. Gate unchanged: PUB-003 still waits on a non-prerelease.
