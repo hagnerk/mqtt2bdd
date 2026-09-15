@@ -1,112 +1,126 @@
 schema: 1
 story: '4.2'
 story_title: 'Prepare the Repository for Public Release'
-gate: CONCERNS
+gate: PASS
 status_reason: >-
-  The seven ACs this story could deliver (1, 2, 3, 4, 5, 9, 11) are all met, independently
-  re-verified, and defect-free. LICENSE was diffed programmatically against the canonical MIT text
-  and is byte-identical, which is what earns the repository a real MIT chip rather than "Other". The
-  history audit was re-run in full and all 17 credential-shaped matches confirmed as development
-  fixtures. DOC-001 is genuinely closed after three deferrals. The gate is CONCERNS, not PASS, for
-  one reason only: ACs 6, 7, 8 and 10 are not met, because publishing a public repository is
-  irreversible and is the maintainer's decision, which the maintainer deferred. The story handles
-  that honestly — it states the gap in four places, delivers every precondition, and carries a
-  verified runnable handover — but an unmet AC is an unmet AC and this gate will not record it as
-  anything else. Nothing here blocks Stories 4.3 or 4.4.
+  All eleven ACs are now met. ACs 6, 7, 8 and 10, open under PUB-001 since 2026-07-29, were
+  re-verified independently against the live repository rather than taken from the PO's
+  post-publication record: the repository is public, its main branch and every published blob are
+  identical to local commit 4496553, the description and all six required topics are set, and the
+  README GitHub renders matches its source fence for fence, heading for heading and table for table.
+  PUB-001 is discharged. One low advisory item (TEST-002): the recorded AC4 audit command 2 now
+  matches its own quotation in the story, so its recorded result is no longer reproducible as
+  written; the history itself is clean.
 reviewer: 'Quinn (Test Architect)'
-updated: '2026-07-29T00:00:00Z'
+updated: '2026-09-15T00:00:00Z'
 
 waiver: { active: false }
 
 top_issues:
-  - id: 'PUB-001'
-    severity: medium
+  - id: 'TEST-002'
+    severity: low
     finding: >-
-      ACs 6, 7, 8 and 10 are not met. The GitHub repository github.com/hagnerk/mqtt2bdd does not
-      exist (confirmed independently: `gh repo view hagnerk/mqtt2bdd` returns "Could not resolve to a
-      Repository"), `git remote -v` is empty, and no history has been pushed. AC10's
-      GitHub-rendering verification is unreachable in consequence. This is a deliberate, disclosed
-      deferral of an irreversible owner decision, not a defect in the work delivered, and it is not
-      raised as a defect — but it is tracked as open so it cannot be lost.
-    suggested_owner: maintainer
-    refs: ['docs/stories/4.2.story.md#acs-6-7-8-and-10-not-done-handed-over']
+      AC4's audit command 2 (`grep -c "BEGIN .*PRIVATE KEY"` over every blob) is self-referential.
+      It returned 0 on 2026-07-29 because it ran before commit 32410e2, which committed the story
+      and gate quoting the command's own pattern. Re-run on the published history it returns 9: 9
+      lines in 3 blobs (two versions of docs/stories/4.2.story.md and gate 4.2), every one a
+      quotation of the command or of its result, none a key. AC4 requires the audit to be
+      reproducible; the command is reproducible, but its recorded expected result is not.
+    suggested_action: >-
+      For any future re-run of this audit, anchor on the PEM armour line instead:
+      `grep -c -E -- "-----BEGIN [A-Z ]*PRIVATE KEY-----"`, which returns 0 on the published history
+      and cannot match prose quoting it. No change to story 4.2 is needed; its record is historical.
+    suggested_owner: dev
+    refs: ['docs/stories/4.2.story.md#task-4--the-history-audit-re-run-in-full-ac4']
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 1, low: 0 }
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
   recommendations:
     must_fix: []
     monitor:
       - >-
-        PUB-001: four ACs await a maintainer action. Story 4.3 can be authored and reviewed without
-        it (a workflow file is a file), but 4.3's AC12 rehearsal and 4.4's AC10 URL verification both
-        inherit the same dependency.
+        TEST-002: reuse the PEM-anchored pattern whenever the history audit is re-run, so that the
+        audit's own documentation cannot produce false positives.
 
-quality_score: 80
-expires: '2026-08-12T00:00:00Z'
+quality_score: 100
+expires: '2026-09-29T00:00:00Z'
 
 evidence:
   tests_reviewed: 0
   risks_identified: 1
   trace:
-    ac_covered: [1, 2, 3, 4, 5, 9, 11]
-    ac_gaps: [6, 7, 8, 10]
-    ac_gap_reason: >-
-      Deferred to the maintainer, not failed. Each requires creating or pushing to a public GitHub
-      repository. The gh CLI is installed and authenticated as hagnerk on the development machine,
-      so the deferral is a deliberate choice and not an incapacity — the Dev Agent Record states this
-      explicitly, which is the right way to report it.
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    ac_gaps: []
+    re_verification_2026_09_15:
+      ac6: >-
+        `gh repo view hagnerk/mqtt2bdd` -> visibility PUBLIC, url https://github.com/hagnerk/mqtt2bdd;
+        `head -1 go.mod` -> module github.com/hagnerk/mqtt2bdd (exact match).
+        proxy.golang.org @latest -> v0.0.9-rc1, origin hash 4496553, so the module path resolves.
+      ac7: >-
+        `git remote -v` -> git@github.com:hagnerk/mqtt2bdd.git. GitHub API branches/main ->
+        4496553274e8ae9563847eaabc80e5d607c03a3b. A commit hash covers its whole ancestry, so an
+        identical hash proves the full history is pushed; independently, the published tree
+        (git/trees/main, recursive, not truncated) lists 221 blobs identical in path and SHA to
+        `git ls-tree -r 4496553`.
+      ac8: >-
+        Description set. Topics: docker, go, golang, grafana, home-automation, iot, jsonb, mqtt,
+        postgresql, zigbee2mqtt; all six required topics present, four additions not excluded by AC8.
+      ac10: >-
+        README HTML fetched from the API (application/vnd.github.html+json) and compared with
+        README.md at 4496553 (blob 95f2b28, identical on both sides): 27 fences -> 27 <pre>, every
+        fence body identical to its rendered text (all 27, not only the diagrams); both text
+        diagrams (38 and 37 lines) with 0 tabs and 0 wide characters; 39 headings -> 39; 3 tables ->
+        3 <table>; no stray fence marker or table separator in the rendered text; all 4 in-page
+        anchor links resolve to a rendered heading id; two badges in the first paragraph, the MIT one
+        linked to LICENSE; rendered relative hrefs (LICENSE x2, prod/init-db/01-schema.sql) all in
+        the published tree, blob URLs 200; license API -> MIT. Repository-wide: 136 relative links
+        in 133 tracked .md files (fenced and inline code excluded), 1 unresolved, in vendored BMad
+        (.bmad-core/working-in-the-brownfield.md:11 -> ./flattener.md), not project documentation.
+      ac4_retroactive: >-
+        The pre-push audit ran before 32410e2, but the first push also carried 32410e2..4496553 (six
+        paths added: release.yml, three gates, two stories). Re-run on the published history:
+        command 1 -> the two .example templates only (223 distinct added paths); command 2 -> see
+        TEST-002, strict PEM header count 0; command 3 -> 31 unique lines, the original 17 plus 14
+        quotations inside docs/stories/4.2.story.md, same four fixture values, no new value;
+        command 4 -> one author and committer. .github/ references no `secrets.`.
 
 nfr_validation:
   security:
     status: PASS
     notes: >-
-      This story IS the security review for the epic, and it holds up. All four audit commands were
-      re-run independently: two .example templates are the only env- or key-shaped files ever added
-      across 215 distinct paths in the full history; zero "BEGIN ... PRIVATE KEY" blobs in the entire
-      object database (a content scan, not a filename scan, so a key pasted into a Markdown file
-      would be caught); 17 assignment-shaped matches, every one traced to one of four development
-      fixtures (dev_password, wrong_password, test_password, prod_test_password), none of which
-      grants access to a system that exists. .gitignore was verified working rather than present —
-      git check-ignore -v confirms dev/.env, .env.prod, bin/ and __debug_bin262058197 are each caught
-      by the specific pattern intended for them, and git ls-files confirms only the two templates are
-      tracked. The one irreversible personal-data consequence (the author email becoming permanently
-      public) is restated in the record rather than quietly inherited from the epic.
+      The history as actually published is clean, re-audited on 4496553 rather than inferred from
+      the 2026-07-29 pre-push audit, which predated the last six pushed commits. No private key, no
+      tracked environment file, no credential value beyond the four known development fixtures. The
+      author email is public, as accepted in the epic.
   performance:
     status: PASS
-    notes: 'Not applicable. No code changed; go build re-run clean as a coherence check only.'
+    notes: 'Not applicable. No code changed.'
   reliability:
     status: PASS
     notes: >-
-      No behavioural surface touched. go.mod, go.sum and every .go file are byte-identical; the diff
-      is LICENSE (new, 21 lines) and README.md (11 insertions, 5 deletions).
+      The module resolves through proxy.golang.org at the path go.mod declares, which is the
+      consequence AC6 exists to protect.
   maintainability:
     status: PASS
     notes: >-
-      DOC-001 closed after three deferrals, and closed correctly: the reworded annotation now agrees
-      with the prose three lines below it, and the ASCII diagram was left untouched as instructed.
-      The PO's ruling on the third go func() site was followed exactly — AC11 was not widened and the
-      "three goroutines started from main()" sentence was left alone. Two deliberate deferrals
-      (Project Structure tree entry -> 4.4 AC8; no .github/ directory -> 4.3) are flagged in the
-      record so they read as scoped rather than as omissions.
+      DOC-001 remains closed. The published documentation has no broken relative link; the only
+      unresolved one is in the vendored BMad framework and is correctly left untouched.
 
 recommendations:
-  immediate:
-    - action: >-
-        PUB-001 (maintainer): run the four-command handover in the Dev Agent Record to close ACs 6,
-        7, 8 and 10. Every precondition is verified: module path matches the target repository, audit
-        clean, remote empty, tree clean, branch main.
-      refs: ['docs/stories/4.2.story.md#acs-6-7-8-and-10-not-done-handed-over']
+  immediate: []
   future:
     - action: >-
-        Story 4.3's AC12 (end-to-end rehearsal on a v0.9.0-rc1 tag) and Story 4.4's AC10 (verify
-        every URL against the actual published release) both inherit PUB-001's dependency. The SM
-        should scope both the same way this story scoped ACs 6/7/8/10 rather than rediscovering the
-        constraint twice.
-      refs: ['docs/prd.md']
+        TEST-002: use the PEM-anchored pattern for any future history audit.
+      refs: ['docs/stories/4.2.story.md']
     - action: >-
-        REL-001 (gate 3.3) and TEST-001 (gate 3.3) are unchanged and still unowned. Story 4.3 wires
-        test/run-integration-tests.sh into CI and is TEST-001's natural home.
-      refs: ['test/run-integration-tests.sh', 'cmd/mqtt2bdd/main.go']
+        Not a 4.2 item, observed while verifying: the published tag and prerelease are v0.0.9-rc1,
+        while Story 4.3's AC12 names the rehearsal tag v0.9.0-rc1. Worth checking when PUB-002 in
+        gate 4.3 is re-assessed.
+      refs: ['docs/qa/gates/4.3-automate-cross-platform-binary-builds.yml']
+    - action: >-
+        Gates 4.3 and 4.4 still list PUB-001 as open in their carry_forward_register. This gate is
+        the register of record for PUB-001; the later gates are updated when they are next reviewed.
+      refs: ['docs/qa/gates/4.3-automate-cross-platform-binary-builds.yml', 'docs/qa/gates/4.4-document-binary-installation.yml']
 
 carry_forward_register:
   resolved:
@@ -119,17 +133,17 @@ carry_forward_register:
     - { id: 'FIND-026', originating_gate: '4.1', resolved_in: '4.1' }
     - { id: 'DOC-001', originating_gate: '3.5', resolved_in: '4.2' }
     - { id: 'STORY-3.5-AC13', originating_gate: '3.5', resolved_in: '4.2', note: 'Conditional AC ("license badge if applicable") satisfied vacuously in 3.5 because no license existed; satisfied substantively here for the first time.' }
+    - { id: 'PUB-001', originating_gate: '4.2', resolved_in: '4.2', resolved_on: '2026-09-15', note: 'Maintainer published on 2026-07-31; description and topics set on 2026-09-15. ACs 6/7/8/10 re-verified by QA against the live repository.' }
   open:
-    - { id: 'PUB-001', originating_gate: '4.2', owner: 'maintainer', reason: 'ACs 6/7/8/10 await an irreversible publication decision reserved to the owner' }
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
     - { id: 'TEST-001', originating_gate: '3.3', reason: 'Negative-path re-exercise deferred to the next touch of the integration test script; story 4.3 is the next realistic opportunity' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Deliberately deferred, accepted risk. Re-assessed for publication in this story and left unchanged: the setting is a labelled default in a template a reader deploys on their own network, which is disclosure rather than exposure.' }
   register_status: >-
-    Clean. DOC-001 leaves the register after three deferrals, and Story 3.5's conditional AC13 is
-    recorded as substantively closed — the exact "FIND-017 failure mode" (a requirement documented as
-    handled without a story closing it) this project tracks against. One new open item, PUB-001,
-    owned by the maintainer rather than by a story.
+    PUB-001 leaves the register, discharged. One new low advisory item, TEST-002. REL-001, TEST-001
+    and broker-authentication are shown as they stood at this story; gates 4.3 and 4.4 carry their
+    later state, and this update does not re-assess them.
 
 history:
   - at: '2026-07-29T00:00:00Z'
@@ -139,3 +153,12 @@ history:
       diffed programmatically against canonical MIT — byte-identical. History audit re-run in full.
       DOC-001 closed. Gate is CONCERNS solely because ACs 6/7/8/10 await a maintainer publication
       decision (PUB-001), which the story discloses honestly rather than claiming.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      Post-publication re-review, prompted by the PO's request in PO Validation (Post-Publication).
+      ACs 6, 7, 8 and 10 re-verified against the live repository independently of the PO's pass:
+      branch hash and all 221 published blobs identical to local 4496553, rendered README matching
+      source on every fence, heading and table, no broken project documentation link. History audit
+      re-run on what was actually published, including the six commits pushed after the pre-push
+      audit: clean. PUB-001 discharged; TEST-002 raised as low advisory.
