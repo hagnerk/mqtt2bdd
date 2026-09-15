@@ -1,39 +1,66 @@
 schema: 1
 story: '4.3'
 story_title: 'Automate Cross-Platform Binary Builds on Tag'
-gate: CONCERNS
+gate: PASS
 status_reason: >-
-  Thirteen of fourteen ACs met and independently re-verified. The workflow's substantive claims were
-  not accepted on the strength of plausible-looking YAML: the build and packaging pipeline was
-  reproduced outside CI, each binary's GOOS/GOARCH/GOARM/CGO_ENABLED read back from its own embedded
-  build settings, and the canonical/alias byte-identity and the 8-lines/4-hashes checksum property
-  measured rather than argued. AC14 (TEST-001) is closed with real evidence after being open since
-  gate 3.3. One low-severity latent defect found and fixed during review (CI-001: staticcheck invoked
-  by bare name, depending on $GOPATH/bin being on PATH — a dependency on runner behaviour that would
-  have surfaced only on a tagged release). The gate is CONCERNS solely because AC12, the end-to-end
-  rehearsal, requires a GitHub repository that does not exist under PUB-001. Two of AC12's four
-  assertions are already locally pre-verified, so what remains untested is the runner environment and
-  the release-creation path, not the build or packaging logic.
+  All fourteen ACs are now met. AC12, open under PUB-002 since 2026-07-29, was verified against the
+  live rehearsal the maintainer ran on 2026-07-31: workflow run 30624610132 succeeded on its first
+  attempt with every job and step green, including the integration suite and its teardown; the
+  prerelease carries the nine expected assets; all eight archives verify against checksums.txt with
+  four distinct hashes; and the extracted linux/amd64 binary logs event=starting with the injected
+  version. The rehearsal ran on v0.0.9-rc1 rather than the v0.9.0-rc1 the AC names (REQ-001, low); no
+  assertion depends on the digits. One low CI item (CI-002): four actions target the deprecated
+  Node.js 20 runtime.
 reviewer: 'Quinn (Test Architect)'
-updated: '2026-07-29T00:00:00Z'
+updated: '2026-09-15T00:00:00Z'
 
 waiver: { active: false }
 
 top_issues:
+  - id: 'REQ-001'
+    severity: low
+    finding: >-
+      AC12 names the rehearsal tag v0.9.0-rc1 and the expected log line version=0.9.0-rc1. The
+      maintainer rehearsed on v0.0.9-rc1, so the release, the archive names and the logged version
+      all read 0.0.9-rc1. Every one of AC12's four assertions holds with that version substituted,
+      the tag carries the pre-release suffix the rehearsal exists to exercise, and no v1.0.0 exists
+      yet, so "before v1.0.0 is tagged" holds too. The deviation is in the literal tag only. It is
+      recorded rather than silently read as equivalent, because this project does not reinterpret
+      ACs. Side effect: v0.0.9-rc1 is now a permanent module version on proxy.golang.org, and @latest
+      resolves to it until a release version exists; harmless, not reversible.
+    suggested_action: >-
+      PO to record in a post-publication validation that AC12 is accepted with v0.0.9-rc1 in place
+      of v0.9.0-rc1. A second rehearsal only to match the literal tag is not recommended on its own
+      (release.yml is byte-identical to the rehearsed version), but see CI-002: if the actions are
+      bumped before v1.0.0, a fresh rc rehearsal is warranted anyway and can use v0.9.0-rc1.
+    suggested_owner: po
+    refs: ['docs/stories/4.3.story.md#post-publication-re-review-2026-09-15']
+  - id: 'CI-002'
+    severity: low
+    finding: >-
+      Every job in run 30624610132 emitted "Node.js 20 is deprecated": actions/checkout@v4,
+      actions/setup-go@v5, actions/upload-artifact@v4 and actions/download-artifact@v4 target Node.js
+      20 and are being forced onto Node.js 24 by the runner. The run succeeded, so this is not a
+      defect today. It has the same shape as CI-001: the workflow depends on runner behaviour it does
+      not control, and the only place a change would surface is a tagged release run.
+    suggested_action: >-
+      Before tagging v1.0.0, move each action to its current major that targets Node.js 24 (check
+      each action's release notes rather than guessing numbers), then rehearse again on an rc tag,
+      since changing the actions invalidates the part of the rehearsal that validated the runner
+      environment.
+    suggested_owner: dev
+    refs: ['.github/workflows/release.yml']
+
+resolved_issues:
   - id: 'PUB-002'
     severity: medium
     finding: >-
-      AC12 is not met. The end-to-end rehearsal on a v0.9.0-rc1 tag requires a workflow run on
-      GitHub's runners against a repository that does not exist, because Story 4.2's ACs 6-8 are
-      deferred under PUB-001. No tag was created and nothing was pushed. This is an inherited
-      dependency, not a defect in this story's work, and it is scoped honestly: the Dev Agent Record
-      splits AC12's four assertions into the two already exercised locally (canonical/alias share a
-      SHA-256; the extracted binary logs the injected version) and the two that genuinely need a
-      runner (the run succeeds; nine assets present).
-    suggested_owner: maintainer
-    refs: ['docs/stories/4.3.story.md#ac12-not-done-handed-over']
-
-resolved_issues:
+      AC12 not met: the end-to-end rehearsal needed a GitHub repository that did not exist (PUB-001).
+    resolution: >-
+      Maintainer published the repository and pushed tag v0.0.9-rc1 on 2026-07-31; the workflow ran
+      and created the prerelease. Re-verified by QA against the live run, release and assets on
+      2026-09-15. Tag-name deviation tracked separately as REQ-001.
+    verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'CI-001'
     severity: low
     finding: >-
@@ -47,8 +74,8 @@ resolved_issues:
       Changed to invoke the absolute path, "$(go env GOPATH)/bin/staticcheck" ./..., with the
       reasoning in a comment. Costs nothing and removes the dependency on undocumented runner
       behaviour for a gate whose whole purpose is to block bad releases. Workflow re-parsed clean
-      after the edit.
-    verified_by: 'Quinn (Test Architect), 2026-07-29'
+      after the edit. Confirmed on a real runner on 2026-07-31: the Staticcheck step succeeded.
+    verified_by: 'Quinn (Test Architect), 2026-07-29; re-confirmed 2026-09-15'
   - id: 'TEST-001'
     severity: low
     finding: >-
@@ -66,88 +93,101 @@ resolved_issues:
     verified_by: 'Quinn (Test Architect), 2026-07-29'
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  totals: { critical: 0, high: 0, medium: 0, low: 2 }
   recommendations:
     must_fix: []
     monitor:
       - >-
-        PUB-002: AC12's rehearsal awaits PUB-001. The rehearsal is what validates the runner
-        environment and the release-creation path; the build and packaging logic is already
-        locally verified.
+        CI-002: bump the Node.js 20 actions and re-rehearse on an rc tag before v1.0.0.
+      - >-
+        REQ-001: PO acceptance of the v0.0.9-rc1 substitution.
 
-quality_score: 85
-expires: '2026-08-12T00:00:00Z'
+quality_score: 100
+expires: '2026-09-29T00:00:00Z'
 
 evidence:
   tests_reviewed: 1
   risks_identified: 2
   trace:
-    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]
-    ac_gaps: [12]
-    ac_gap_reason: >-
-      Deferred, inherited from PUB-001. Two of AC12's four assertions are pre-verified locally.
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    ac_gaps: []
+    re_verification_2026_09_15:
+      ac1: >-
+        One workflow run exists in the repository's whole history, event push, head branch
+        v0.0.9-rc1. The 74 commits pushed to main triggered nothing.
+      ac2: >-
+        Quality gates job: Check formatting, Vet, Staticcheck, Unit tests and Integration tests all
+        success. The log shows the script's own milestones through "All integration tests passed."
+        and "Tearing down test stack", with the three test containers and the test network removed.
+        Build jobs start only after the quality job completed (10:48:13Z -> first build 10:48:16Z).
+      ac3_ac4: >-
+        Read back from each released binary's embedded build info (go version -m, in the go-dev
+        container): linux/amd64, linux/arm64, linux/arm with GOARM=7, darwin/arm64; every one
+        CGO_ENABLED=0, -ldflags="-s -w -X main.Version=0.0.9-rc1", vcs.revision 4496553, go1.23.12.
+      ac5_ac6_ac8: >-
+        Nine assets with exactly the AC5/AC6 names at version 0.0.9-rc1. GitHub's per-asset digests
+        pair canonical and alias identically; checksums.txt has 8 lines and 4 distinct hashes and
+        `sha256sum -c checksums.txt` reports OK for all eight downloaded archives.
+      ac7: >-
+        Each canonical archive contains exactly mqtt2bdd (-rwxr-xr-x), LICENSE and README.md, with no
+        leading directory. LICENSE and README.md hash identically to the files at commit 4496553.
+      ac9: >-
+        Release created by github-actions[bot] (the workflow, not a manual upload), log shows
+        gh release create ... --generate-notes, body is GitHub's generated "Full Changelog" line.
+      ac10: >-
+        isPrerelease true. GET releases/latest -> 404, and
+        releases/latest/download/mqtt2bdd_linux_amd64.tar.gz -> 404, while the pinned
+        releases/download/v0.0.9-rc1/mqtt2bdd_linux_amd64.tar.gz -> 200 (3449980 bytes).
+      ac11: >-
+        gh secret list and gh variable list empty; 0 environments. The repository's default workflow
+        token permission is read, so the workflow's explicit contents:write is what made the release
+        possible, which is exactly the reason the file gives for declaring it.
+      ac12: >-
+        Run 30624610132, attempt 1, conclusion success, all six jobs and every step success. Nine
+        assets present. Canonical and alias linux_amd64 share SHA-256 759c68bc...da46. The extracted
+        linux/amd64 binary, run in go-dev under amd64 emulation, logs
+        event=starting version=0.0.9-rc1 as its first line (the linux/arm64 binary, run natively,
+        logs the same). No v1.0.0 tag exists. Tag deviation: REQ-001.
+      workflow_identity: >-
+        .github/workflows/release.yml has the same blob (ed904a3) at 4496553, the rehearsed commit,
+        and at HEAD, so the rehearsal validated the file as it stands.
 
 nfr_validation:
   security:
     status: PASS
     notes: >-
-      permissions declared at workflow level as contents:write and nothing broader, so the workflow
-      cannot silently inherit a wider default. grep for "secrets." across the file returns no match;
-      the only token reference is GH_TOKEN via github.token. Every `uses:` is a first-party
-      actions/* action (checkout@v4, setup-go@v5, upload-artifact@v4, download-artifact@v4) —
-      verified by reading them out of the parsed document, not by scanning the text. Creating the
-      release with the preinstalled gh CLI rather than a third-party action is the right call for a
-      workflow whose entire output is artefacts other people download and execute: it adds nothing
-      to the supply chain. Note the release job deliberately has no checkout step and passes
-      --repo "${GITHUB_REPOSITORY}" explicitly, which is what makes gh's repo detection unnecessary —
-      checked rather than assumed.
+      Confirmed on the live repository rather than from the file: no repository secret, no variable,
+      no environment. The default token is read-only and the workflow's explicit contents:write was
+      sufficient and necessary. The release was authored by github-actions[bot], so what users
+      download is what the gated workflow built. First-party actions only.
   performance:
     status: PASS
     notes: >-
-      Four matrix jobs run in parallel with fail-fast:false, so one broken platform reports one
-      failure instead of masking the state of the other three — and the release job still cannot run,
-      because needs:build requires every matrix leg to succeed. setup-go's module caching is on by
-      default. Artifact retention is 1 day, appropriate for a hand-off between jobs in the same run.
+      Whole run 4m21s (10:44:54Z -> 10:49:15Z): quality gates 3m17s, the four builds in parallel in
+      about 40s, publication 10s.
   reliability:
     status: PASS
     notes: >-
-      AC2's guarantee is structural rather than conventional: needs: is a hard dependency, so a
-      failing gate cannot be overridden by remembering to check. No continue-on-error anywhere.
-      The gofmt step correctly inspects the output rather than trusting the exit code — gofmt -l
-      exits 0 even when it lists files, so a bare step would have been a gate that can never fail.
-      The checksum step asserts 8 lines and 4 distinct hashes rather than just writing the file,
-      which is what would catch a regression in the aliasing before publication rather than after.
-      The Package step verifies LICENSE and README.md exist rather than assuming, so a missing
-      licence cannot ship silently in every archive of every release. An empty GOARM (what the
-      matrix passes for the three non-ARM targets) was verified not to break the build — a CI-only
-      failure mode otherwise.
+      The gate ordering held on a real runner; the integration suite passed on GitHub's Docker and
+      tore its stack down. CI-002 is the one runner-dependency left to address before v1.0.0.
   maintainability:
     status: PASS
-    notes: >-
-      144 comment lines in 286. Every job states what depends on it; each non-obvious step carries
-      its rationale, and nothing restates the obvious (actions/checkout@v4 has no comment, correctly).
-      The matrix name fragment is data rather than derived from GOOS/GOARCH, with the reason
-      commented — deriving it would produce linux_arm where AC5 and AC6 both name the file
-      linux_armv7. Build flags are byte-for-byte the production Dockerfile's, so a released binary
-      and a container-built one cannot diverge.
+    notes: 'Unchanged since the 2026-07-29 review; release.yml is byte-identical to the rehearsed version.'
 
 recommendations:
-  immediate:
-    - action: >-
-        PUB-002 (maintainer): after Story 4.2's PUB-001 publication, run the AC12 rehearsal runbook
-        in the Dev Agent Record. Tag v0.9.0-rc1, watch the run, confirm nine assets and the
-        pre-release flag, then tag v1.0.0.
-      refs: ['docs/stories/4.3.story.md#ac12-not-done-handed-over']
+  immediate: []
   future:
     - action: >-
-        Story 4.4 AC5 must document `sha256sum --ignore-missing -c checksums.txt`. Verified during
-        this story: it works on GNU coreutils and on macOS (both sha256sum and shasum -a 256), but
-        NOT on BusyBox, which rejects the option outright. Marginal for the audience but worth one
-        line rather than a support question.
-      refs: ['README.md']
+        CI-002 then a fresh rc rehearsal before v1.0.0; that rehearsal can use v0.9.0-rc1 and makes
+        REQ-001 moot for the record going forward.
+      refs: ['.github/workflows/release.yml']
     - action: >-
-        REL-001 (gate 3.3) is unchanged and still unowned. Requires a behavioural change in
-        healthCheckLoop; no story in Epic 4 touches Go source.
+        For Story 4.4 (PUB-003): releases/latest/download/... URLs return 404 and will keep doing so
+        until a non-prerelease exists, which is AC10 of this story working as designed. The README's
+        "latest" install URLs cannot resolve before v1.0.0 is published.
+      refs: ['docs/qa/gates/4.4-document-binary-installation.yml']
+    - action: >-
+        REL-001 (gate 3.3) is unchanged and still unowned.
       refs: ['cmd/mqtt2bdd/main.go']
 
 carry_forward_register:
@@ -163,18 +203,19 @@ carry_forward_register:
     - { id: 'STORY-3.5-AC13', originating_gate: '3.5', resolved_in: '4.2' }
     - { id: 'TEST-001', originating_gate: '3.3', resolved_in: '4.3' }
     - { id: 'CI-001', originating_gate: '4.3', resolved_in: '4.3' }
+    - { id: 'PUB-001', originating_gate: '4.2', resolved_in: '4.2', resolved_on: '2026-09-15' }
+    - { id: 'PUB-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15' }
   open:
-    - { id: 'PUB-001', originating_gate: '4.2', owner: 'maintainer', reason: 'Story 4.2 ACs 6/7/8/10 await an irreversible publication decision' }
-    - { id: 'PUB-002', originating_gate: '4.3', owner: 'maintainer', reason: 'Story 4.3 AC12 rehearsal; blocked by PUB-001' }
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
+    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1; substance met, PO acceptance to record.' }
+    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Four actions target deprecated Node.js 20; bump and re-rehearse on an rc tag before v1.0.0.' }
+    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10; unblocked by PUB-001, not re-assessed in this update. latest URLs need a non-prerelease.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, re-assessed at publication in Story 4.2 and left unchanged' }
   register_status: >-
-    Clean. TEST-001 leaves the register after being open since gate 3.3 — the last of the three
-    long-running documentation/test findings (DOC-001, TEST-001) that Epic 4 has closed by the same
-    principle: a finding whose consequence changes is a finding whose deferral should end. Only
-    REL-001 remains genuinely unowned, and it is not actionable. The two open items are both
-    maintainer-owned publication dependencies, not story work.
+    PUB-001 and PUB-002 leave the register. Three low items are open (TEST-002, REQ-001, CI-002),
+    none blocking. PUB-003 remains open pending the re-review of gate 4.4.
 
 history:
   - at: '2026-07-29T00:00:00Z'
@@ -183,3 +224,11 @@ history:
       Thirteen of fourteen ACs verified, with the build and packaging pipeline reproduced outside CI
       rather than inferred from the YAML. CI-001 found and fixed during review. TEST-001 closed with
       evidence. AC12 deferred under PUB-002, inherited from PUB-001.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      Post-publication re-review. AC12 verified against the maintainer's 2026-07-31 rehearsal: run
+      green end to end, nine assets, all checksums verified, build settings read back from every
+      released binary, linux/amd64 binary logging the injected version. AC10 and AC11 re-checked
+      live (latest URL 404 for a prerelease; no secret, read-only default token). PUB-002 resolved;
+      REQ-001 (tag literal) and CI-002 (Node.js 20 actions) raised as low.
