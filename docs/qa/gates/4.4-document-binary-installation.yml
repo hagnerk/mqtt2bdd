@@ -210,7 +210,7 @@ carry_forward_register:
     - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10 — latest URL resolution and follows-newest behaviour. Now blocked by the absence of a non-pre-release (v1.0.0), no longer by PUB-001.' }
     - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation. Low.' }
     - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1. Low.' }
-    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Four actions target deprecated Node.js 20. Low.' }
+    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Actions bumped to Node.js 24 majors on 2026-09-15; open until an rc rehearsal proves them on a runner. Low.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'mqtt_status cannot distinguish a permanently-failing re-subscribe from a transient one. Needs a healthCheckLoop change. Unowned and not actionable.' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, not a defect and not a story. Re-assessed at publication in story 4.2 and left unchanged.' }

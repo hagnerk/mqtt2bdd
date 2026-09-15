@@ -49,6 +49,11 @@ top_issues:
       since changing the actions invalidates the part of the rehearsal that validated the runner
       environment.
     suggested_owner: dev
+    status: >-
+      Fix applied locally on 2026-09-15, at the maintainer's request: checkout@v7, setup-go@v7,
+      upload-artifact@v7, download-artifact@v8, all declaring node24. Each major's release notes
+      were read against this workflow's usage; no breaking change applies (details in the story's
+      QA Results). Stays open until an rc rehearsal proves the new actions on a real runner.
     refs: ['.github/workflows/release.yml']
 
 resolved_issues:
@@ -208,7 +213,7 @@ carry_forward_register:
   open:
     - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
     - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1; substance met, PO acceptance to record.' }
-    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Four actions target deprecated Node.js 20; bump and re-rehearse on an rc tag before v1.0.0.' }
+    - { id: 'CI-002', originating_gate: '4.3', owner: 'dev', reason: 'Actions bumped to Node.js 24 majors on 2026-09-15 (checkout@v7, setup-go@v7, upload-artifact@v7, download-artifact@v8); open until an rc rehearsal proves them on a runner.' }
     - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10; unblocked by PUB-001, not re-assessed in this update. latest URLs need a non-prerelease.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
@@ -232,3 +237,9 @@ history:
       released binary, linux/amd64 binary logging the injected version. AC10 and AC11 re-checked
       live (latest URL 404 for a prerelease; no secret, read-only default token). PUB-002 resolved;
       REQ-001 (tag literal) and CI-002 (Node.js 20 actions) raised as low.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      CI-002 fix applied to release.yml the same day (Node.js 24 majors), release notes reviewed
+      against the workflow's usage. Gate unchanged; CI-002 stays open pending an rc rehearsal,
+      because the rehearsal of record validated the previous action versions.

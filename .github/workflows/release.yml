@@ -29,6 +29,11 @@ on:
 permissions:
   contents: write
 
+# Action versions. Every `uses:` below is pinned to a major that runs on Node.js 24. The Node.js 20
+# majors this file used before (checkout@v4, setup-go@v5, upload-artifact@v4,
+# download-artifact@v4) are deprecated on GitHub's runners, which force them onto Node.js 24 with a
+# warning, and a tagged release run is the worst place to find out when that stops working. Bump a
+# major deliberately, after reading its release notes, then rehearse on a pre-release tag.
 jobs:
   # ---------------------------------------------------------------------------------------
   # Job 1 of 3 — quality gates.
@@ -47,13 +52,19 @@ jobs:
     name: Quality gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # Read the version from go.mod rather than hardcoding it here. A hardcoded version is
           # a second place the Go version lives, and two places that must agree eventually do
           # not.
+          #
+          # Since v6, setup-go also sets GOTOOLCHAIN=local: the Go it installs is the Go that
+          # runs. A go.mod or a `go install` target asking for a newer Go fails the step instead
+          # of silently downloading another toolchain — the same behaviour as the official
+          # golang Docker images this project develops in. go.mod declares `go 1.23` with no
+          # toolchain line, so this resolves to the latest 1.23.x.
           go-version-file: go.mod
 
       - name: Check formatting
@@ -124,9 +135,9 @@ jobs:
           - { name: linux_armv7,  goos: linux,  goarch: arm, goarm: '7' }
           - { name: darwin_arm64, goos: darwin, goarch: arm64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -203,7 +214,7 @@ jobs:
 
           ls -l "${CANONICAL}" "${ALIAS}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: archives-${{ matrix.name }}
           path: mqtt2bdd_*.tar.gz
@@ -224,11 +235,16 @@ jobs:
     needs: [quality, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           # merge-multiple flattens all four per-target artifacts into one directory, so the
           # checksum step can see all eight archives at once.
+          #
+          # Since v8, a downloaded artifact whose digest does not match the one recorded at
+          # upload fails this step by default (digest-mismatch: error). Left at that default on
+          # purpose: an archive corrupted between two jobs must never reach the checksum step,
+          # where it would be hashed and published as if it were genuine.
           pattern: archives-*
           merge-multiple: true
 
