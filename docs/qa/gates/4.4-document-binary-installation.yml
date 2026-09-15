@@ -1,34 +1,40 @@
 schema: 1
 story: '4.4'
 story_title: 'Document Binary Installation from a GitHub Release'
-gate: CONCERNS
+gate: PASS
 status_reason: >-
-  Post-publication re-review against the live v0.0.9-rc1 release. The pinned path works end to end,
-  and the three documentation defects found by walking the Installation section as a user (DOC-003
-  silent 404 downloads, DOC-004 wrong first-run output, DOC-005 Gatekeeper step failing after curl)
-  were fixed in README.md during this review and re-verified by execution. The gate stays CONCERNS
-  for one reason only: AC10's latest URLs cannot resolve until a non-pre-release exists, so PUB-003
-  now waits on v1.0.0 rather than on PUB-001.
+  All eleven ACs are met. AC10 closes with v1.0.0, the first release that is not a pre-release:
+  every URL and command in the Installation section was run against it. The latest path, the pinned
+  path and the version-range pattern all download, verify and extract as documented, on macOS and
+  through the BusyBox fallback. The released binaries produce exactly the two first-run outputs the
+  README now documents. PUB-003 is resolved. The three documentation defects found on 2026-09-15
+  (DOC-003/004/005) were fixed, published in 2808b65, and ship inside every v1.0.0 archive.
 reviewer: 'Quinn (Test Architect)'
 updated: '2026-09-15T00:00:00Z'
 
 waiver: { active: false }
 
-top_issues:
+top_issues: []
+
+resolved_issues:
   - id: 'PUB-003'
     severity: medium
     finding: >-
-      AC10 remains partly unverified, now on a narrower and different blocker. Verified live: the
-      nine pinned URLs, the API endpoint returning this repository's releases, and the jq selection
-      excluding the pre-release on real data. Still unverifiable: that releases/latest/download/<name>
-      serves, and that it follows the newest non-pre-release. Both need at least one non-pre-release
-      (two to demonstrate "follows"); today every latest URL returns 404, which is Story 4.3 AC10
-      working as designed. A real browser download (for the quarantine attribute) was simulated,
-      not performed.
-    suggested_owner: maintainer
-    refs: ['docs/stories/4.4.story.md#post-publication-re-review-2026-09-15']
-
-resolved_issues:
+      AC10 partly unverified: the latest URLs could not resolve while no non-pre-release existed
+      (first blocked by PUB-001, then by the absence of v1.0.0), and "follows the newest
+      non-pre-release" could not be observed.
+    resolution: >-
+      v1.0.0 published on 2026-09-15 (run 35010177508, release not marked pre-release, GitHub
+      "Latest"). GET releases/latest -> v1.0.0. The four latest alias URLs and latest checksums.txt
+      redirect to download/v1.0.0/<name> and serve 200 with the release asset sizes. The Latest path
+      walked exactly as written on macOS: both downloads exit 0, sha256sum --ignore-missing -c prints
+      "mqtt2bdd_darwin_arm64.tar.gz: OK", tar extracts, and the latest archive is byte-identical to
+      the pinned v1.0.0 alias. Pre-release exclusion was observed across time: earlier the same day,
+      with v0.0.9-rc2 as the newest tag, every latest URL returned 404; once v1.0.0 existed, latest
+      resolved to it and not to either rc. What remains unobservable until a second release ships is
+      latest moving on to it, which is GitHub platform behaviour rather than a claim about this
+      project's artefacts; recorded as an observation, not an open item.
+    verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'DOC-003'
     severity: medium
     finding: >-
@@ -36,150 +42,128 @@ resolved_issues:
       error curl saved the error body under the requested filename and exited 0. Walked as written on
       2026-09-15, the Latest path produced two 9-byte "Not Found" files, the macOS verify step exited
       0 with only a warning, and the failure first surfaced at tar as an archive-format error. The
-      version-range pattern did the same, and did not guard an empty TAG, so it built
-      releases/download//mqtt2bdd__linux_amd64.tar.gz.
+      version-range pattern did the same, and did not guard an empty TAG.
     resolution: >-
-      All six curl invocations now use -f (-fLO for downloads, -fs for the API call). A sentence
-      explains why -f is there, and another states that latest URLs return 404 while only
-      pre-releases exist. The range pattern gained `[ -n "$TAG" ] || { echo "no matching release"
-      >&2; exit 1; }`, and the rate-limit paragraph now explains how -f and the guard handle an error
-      response. Re-verified: latest path -> curl exits non-zero on 404 with no file left behind;
-      pinned path -> OK, exit 0; range snippet -> "no matching release", exit 1, no file, both when
-      nothing matches and when the API call itself fails.
+      All six curl invocations use -f, with the reason stated; the range pattern guards an empty
+      TAG. Verified on 2026-09-15 against the 404s, and again against v1.0.0, where the snippet run as
+      written resolves TAG=v1.0.0, downloads mqtt2bdd_1.0.0_linux_amd64.tar.gz and verifies it OK.
     verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'DOC-004'
     severity: low
     finding: >-
       Extract and run showed a bare ./mqtt2bdd printing event=starting, and What the binary still
       needs said an unconfigured binary logs event=starting and then fails to connect. main.go loads
-      configuration at :200 and exits at :203, before the starting log at :210, so an unconfigured
-      run prints only config_load_failed. Missed on 2026-07-31 because the binary ran inside go-dev,
-      which carries the dev configuration.
+      configuration at :200 and exits at :203, before the starting log at :210.
     resolution: >-
-      Extract and run now shows the real unconfigured output (config_load_failed naming
-      MQTT_BROKER), says it is the expected first result, links to What the binary still needs, and
-      shows the starting line as what appears once configured. The needs paragraph now states both
-      outcomes: no variables -> immediate config_load_failed; variables set but broker or database
-      unreachable -> starting, then startup_aborted, non-zero exit. Both outputs were reproduced with
-      the released linux_arm64 binary under `env -i` in go-dev: empty environment -> config_load_failed,
-      exit 1; required variables pointing at 127.0.0.1:1 -> starting, config_loaded, connecting,
-      connect_failed, startup_aborted, exit 1.
+      Both outcomes documented. Re-verified with the v1.0.0 linux_amd64 binary under `env -i`: the
+      bare run prints only config_load_failed (MQTT_BROKER is not set), exit 1; with the required
+      variables and an unreachable broker it logs event=starting version=1.0.0, then
+      startup_aborted, exit 1.
     verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'DOC-005'
     severity: low
     finding: >-
-      `xattr -d com.apple.quarantine ./mqtt2bdd` was presented as required, but after the README's own
-      curl download there is no quarantine attribute (only com.apple.provenance), so it failed with
-      "No such xattr", exit 1.
+      `xattr -d com.apple.quarantine ./mqtt2bdd` failed with "No such xattr", exit 1, after the
+      README's own curl download.
     resolution: >-
-      The paragraph now explains that browsers quarantine downloads and tar carries the mark onto the
-      binary; the command is `xattr -d com.apple.quarantine ./mqtt2bdd 2>/dev/null || true`, followed
-      by a sentence noting curl does not set the attribute. Re-verified: exit 0 on a curl-downloaded
-      binary, and exit 0 with the attribute actually cleared on a binary carrying a quarantine
-      attribute.
+      Scoped to browser downloads and made idempotent (`2>/dev/null || true`). Re-verified on the
+      v1.0.0 latest download: exit 0.
     verified_by: 'Quinn (Test Architect), 2026-09-15'
   - id: 'DOC-002'
     severity: medium
     finding: >-
       User-facing, and the kind of defect that only appears when the section is read as a sequence
       rather than as parts. The Download subsection documents two paths, pinned and latest, and says
-      the choice matters. Every subsequent command then assumed the pinned path: Verify told the
-      reader to fetch checksums.txt from the hardcoded v1.2.3 release, and Verify, the BusyBox
-      fallback and Extract all named mqtt2bdd_1.2.3_linux_amd64.tar.gz. A reader who followed the
-      latest URL holds mqtt2bdd_linux_amd64.tar.gz and would have fetched a checksum file from a
-      different release — producing a verification failure that looks like a corrupted download.
-      AC1's promise is copy-pasteable instructions; for one of the two documented paths they were not.
+      the choice matters. Every subsequent command then assumed the pinned path, so a reader who
+      followed the latest URL would have fetched a checksum file from a different release.
     resolution: >-
-      Verify now gives both checksums.txt URLs, states explicitly that it must come from the same
-      release as the archive, shows both expected OK lines, and explains why either download
-      verifies without knowing about the other — checksums.txt lists every archive under both its
-      canonical and its alias name, and the pair is byte-identical so it shares one hash. Extract
-      gained a substitute-your-filename sentence. The premise was verified by reproduction, not
-      asserted. Re-confirmed on the real release on 2026-09-15: the alias archive alone verifies OK
-      through the BusyBox fallback.
-    verified_by: 'Quinn (Test Architect), 2026-07-31; re-confirmed 2026-09-15'
+      Verify gives both checksums.txt URLs and explains why either download verifies. Confirmed on
+      the real v1.0.0 release: the latest checksums.txt verifies the latest (alias) archive, and the
+      BusyBox fallback prints OK for both the canonical and the alias name.
+    verified_by: 'Quinn (Test Architect), 2026-07-31; re-confirmed 2026-09-15 on v0.0.9-rc1 and v1.0.0'
 
 risk_summary:
-  totals: { critical: 0, high: 0, medium: 1, low: 0 }
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
   recommendations:
     must_fix: []
-    monitor:
-      - >-
-        PUB-003: walk the latest path end to end, then close it, as soon as v1.0.0 is published.
+    monitor: []
 
-quality_score: 90
+quality_score: 100
 expires: '2026-09-29T00:00:00Z'
 
 evidence:
   tests_reviewed: 0
   risks_identified: 4
   trace:
-    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 11]
-    ac_partial: [10]
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    ac_partial: []
     ac_gaps: []
-    ac_partial_reason: >-
-      Latest-URL resolution and its follows-newest behaviour need a non-pre-release that does not
-      exist yet. Everything else in AC10 is now verified against the live release.
-    re_verification_2026_09_15:
-      readme_identity: >-
-        Before this review's fixes, README.md blob 95f2b28 was identical at 4496553 (the published
-        commit) and at HEAD. The fixes were published in 2808b65 (on GitHub's main) and ship inside
-        every v0.0.9-rc2 archive: the README.md in all four archives hashes identically to 698235b's.
-      pinned_path: >-
-        All nine releases/download/v0.0.9-rc1/<name> URLs return 200 with sizes matching the release
-        assets. macOS host, in an empty directory holding one downloaded archive:
-        `sha256sum --ignore-missing -c` (/sbin/sha256sum) and `shasum -a 256 --ignore-missing -c`
-        both print "mqtt2bdd_0.0.9-rc1_darwin_arm64.tar.gz: OK", exit 0. BusyBox (go-dev):
-        --ignore-missing rejected as the README says, and the grep fallback prints OK for the canonical
-        and for the alias archive. Extraction gives three files, binary -rwxr-xr-x.
+    re_verification_v1_0_0_2026_09_15:
+      release: >-
+        Tag v1.0.0 (annotated) -> ec06841, GitHub's main. release.yml blob 23625db is identical to the
+        one rehearsed in v0.0.9-rc2; README.md blob ab05cfe is identical to 2808b65 (the fixed
+        README). Run 35010177508: attempt 1, six jobs success, zero non-success steps, no check-run
+        annotations, zero "Node.js 20" lines, go1.23.12 under GOTOOLCHAIN=local in every job,
+        digest-mismatch: error, integration suite passed and torn down. Release not a pre-release,
+        created by github-actions[bot], notes comparing v0.0.9-rc2...v1.0.0, nine assets.
       latest_path: >-
-        releases/latest/download/{mqtt2bdd_linux_amd64.tar.gz, mqtt2bdd_darwin_arm64.tar.gz,
-        checksums.txt} all return 404; GET /releases/latest returns 404. With the corrected commands,
-        curl fails on the 404 and leaves no file.
-      api_and_range_pattern: >-
-        api.github.com/repos/hagnerk/mqtt2bdd/releases returns 1 release (v0.0.9-rc1,
-        prerelease true). The jq stage excludes it, correctly. The corrected snippet stops with
-        "no matching release", exit 1.
-      run: >-
-        Released binary under `env -i`: empty environment -> config_load_failed, exit 1; required
-        variables set with an unreachable broker -> starting ... startup_aborted, exit 1. Both now
-        documented.
-      gatekeeper: >-
-        curl download: xattrs com.apple.provenance only; codesign Signature=adhoc (linker-signed);
-        spctl rejected. Simulated browser quarantine: propagated by tar. The corrected command exits 0
-        in both cases and clears the attribute when present. A real browser download was not
-        performed, and the darwin binary was deliberately not executed on the maintainer's host.
+        GET releases/latest -> v1.0.0. Latest URLs for the four aliases and checksums.txt redirect to
+        download/v1.0.0/<name>, 200, sizes matching. Walked as written on macOS: curl exit 0 twice,
+        verify "mqtt2bdd_darwin_arm64.tar.gz: OK" exit 0, extract exit 0, binary -rwxr-xr-x, xattr
+        step exit 0. Latest and pinned alias archives share SHA-256 6452cd3a951b...
+      pinned_path: >-
+        v1.2.3 -> v1.0.0 on macOS: curl exit 0 twice, "mqtt2bdd_1.0.0_darwin_arm64.tar.gz: OK", extract
+        exit 0; codesign Signature=adhoc (linker-signed).
+      range_pattern: >-
+        Snippet run as written: TAG=v1.0.0 (jq excludes v0.0.9-rc1 and v0.0.9-rc2), downloads
+        mqtt2bdd_1.0.0_linux_amd64.tar.gz (3450610 bytes), which verifies OK.
+      busybox_and_binaries: >-
+        go-dev: `sha256sum -c checksums.txt` 8 OK, 4 distinct hashes; --ignore-missing rejected as
+        documented; grep fallback OK for canonical and alias. All four binaries: go1.23.12,
+        CGO_ENABLED=0, -ldflags="-s -w -X main.Version=1.0.0", vcs.revision ec06841, GOOS/GOARCH and
+        GOARM=7 per target; archives hold mqtt2bdd (-rwxr-xr-x), LICENSE and README.md identical to
+        ec06841. linux_amd64 under env -i: bare run -> config_load_failed, exit 1; required variables
+        with unreachable broker -> starting version=1.0.0, startup_aborted, exit 1.
+    re_verification_rc1_2026_09_15: >-
+      Earlier the same day, against v0.0.9-rc1 (the only release then): pinned path verified on
+      macOS and BusyBox; latest URLs 404; DOC-003, DOC-004 and DOC-005 found by walking the section as
+      a user, fixed, and re-verified by execution. Full detail in the story's QA Results.
 
 nfr_validation:
   security:
     status: PASS
     notes: >-
-      Checksum guidance still correctly scoped: it verifies integrity, not authorship. With -f,
-      a failed checksums.txt download can no longer make verification exit 0 on an error page.
+      Checksum guidance correctly scoped to integrity, not authorship. With -f, a failed download
+      can no longer make verification exit 0 on an error page. The macOS binary is ad-hoc
+      linker-signed, not Developer ID signed, as the README's "unsigned" states in substance.
   performance:
     status: PASS
     notes: 'Not applicable — documentation only.'
   reliability:
     status: PASS
     notes: >-
-      After the fixes, the documented commands stop at the step that failed, and the documented
-      first-run output matches what an unconfigured and a misconfigured user actually see, both
-      reproduced with the released binary.
+      Every documented path stops at the step that fails and succeeds end to end on the real
+      release; the documented first-run outputs match the released binary exactly.
   maintainability:
     status: PASS
     notes: >-
-      Archive names, table and release subsection all match the live release exactly. Lesson recorded
-      for future verification: run documented binaries with `env -i`, never inside a container
-      that carries the dev configuration.
+      Archive names, platform table and release subsection match the live release. Lesson kept for
+      future verification: run documented binaries with `env -i`, never inside a container that
+      carries the dev configuration.
 
 recommendations:
   immediate: []
   future:
     - action: >-
-        Remaining before PUB-003 can close: PO acceptance of REQ-001 (gate 4.3), tag v1.0.0, then
-        walk the latest path end to end, including the "follows the newest" behaviour once a second
-        release exists.
-      refs: ['docs/qa/gates/4.3-automate-cross-platform-binary-builds.yml']
+        Optional, at the next release: confirm that the latest URLs move from v1.0.0 to it. This is
+        GitHub's documented behaviour and not a claim this project can break, so it is not tracked as
+        an open item.
+      refs: ['README.md']
+    - action: >-
+        Observation, not a finding: proxy.golang.org already serves v1.0.0 (@v/v1.0.0.info) but its
+        @latest still answered v0.0.9-rc1 minutes after publication, a cache lag. The README does not
+        document go install, so no documented command is affected.
+      refs: []
     - action: >-
         REL-001 (gate 3.3) remains unowned and not actionable.
       refs: ['cmd/mqtt2bdd/main.go']
@@ -204,16 +188,17 @@ carry_forward_register:
     - { id: 'DOC-004', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15' }
     - { id: 'DOC-005', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15' }
     - { id: 'CI-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15', note: 'Proven on a runner by the v0.0.9-rc2 run 35008908643.' }
+    - { id: 'PUB-003', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15', note: 'Verified against v1.0.0, the first non-pre-release.' }
   open:
-    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10 — latest URL resolution and follows-newest behaviour. Now blocked by the absence of a non-pre-release (v1.0.0), no longer by PUB-001.' }
-    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation. Low.' }
-    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 instead of v0.9.0-rc1. Low.' }
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
+    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1/rc2 instead of v0.9.0-rc1. With v1.0.0 tagged, only acceptance remains possible. Low.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'mqtt_status cannot distinguish a permanently-failing re-subscribe from a transient one. Needs a healthCheckLoop change. Unowned and not actionable.' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, not a defect and not a story. Re-assessed at publication in story 4.2 and left unchanged.' }
   register_status: >-
-    PUB-001, PUB-002 and the three documentation items found today are resolved. PUB-003 is narrowed
-    and waits on v1.0.0. This register is the most recent across Epic 4 and supersedes the open lists
+    Every publication dependency of Epic 4 (PUB-001, PUB-002, PUB-003) is resolved, verified against
+    the live repository and releases. Two low items remain open, neither blocking: TEST-002 (dev)
+    and REQ-001 (PO). This register is the most recent across Epic 4 and supersedes the open lists
     in gates 4.2 and 4.3.
 
 history:
@@ -237,3 +222,9 @@ history:
     note: >-
       README fixes published (2808b65 on main) and shipped in every v0.0.9-rc2 archive. CI-002
       resolved in gate 4.3 by the rc2 run. Gate unchanged: PUB-003 still waits on a non-prerelease.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      v1.0.0 published. Latest, pinned and version-range paths walked as written against it on
+      macOS and BusyBox, every download verified, released binaries producing the documented outputs.
+      PUB-003 resolved; all eleven ACs met; quality score 100.

@@ -23,14 +23,16 @@ top_issues:
       maintainer rehearsed on v0.0.9-rc1 (2026-07-31) and again on v0.0.9-rc2 (2026-09-15), so every
       release, archive name and logged version reads 0.0.9-rcN. Every one of AC12's four assertions
       holds with that version substituted, both tags carry the pre-release suffix the rehearsal
-      exists to exercise, and no v1.0.0 exists yet. The deviation is in the literal tag only, and it
+      exists to exercise, and both ran before v1.0.0 was tagged. The deviation is in the literal tag only, and it
       is now a consistent choice rather than a slip. It is recorded rather than silently read as
       equivalent, because this project does not reinterpret ACs. Side effect: v0.0.9-rc1 is a
       permanent module version on proxy.golang.org; harmless, not reversible.
     suggested_action: >-
       PO to record in a post-publication validation that AC12 is accepted with the v0.0.9-rcN
-      rehearsals in place of v0.9.0-rc1. No further rehearsal is needed for the workflow's sake:
-      rc2 already validated the current release.yml on a runner.
+      rehearsals in place of v0.9.0-rc1. Since v1.0.0 was tagged on 2026-09-15, AC12's literal
+      wording ("rehearsed on a v0.9.0-rc1 tag before v1.0.0 is tagged") can no longer be satisfied,
+      so acceptance is the only remaining resolution. v1.0.0 was built from the release.yml blob
+      rc2 rehearsed, so the rehearsal it relies on is the right one.
     suggested_owner: po
     refs: ['docs/stories/4.3.story.md#post-publication-re-review-2026-09-15']
 
@@ -203,12 +205,13 @@ recommendations:
   immediate: []
   future:
     - action: >-
-        REQ-001: PO acceptance, then tag v1.0.0 when ready. The workflow at 698235b is the version
-        rehearsed on a runner; any further change to release.yml warrants another rc.
+        REQ-001: PO acceptance only. v1.0.0 (ec06841) was built by run 35010177508 from the
+        release.yml blob rc2 rehearsed, succeeded with no annotation, and is not marked pre-release.
+        Any future change to release.yml warrants an rc before the next release.
       refs: ['.github/workflows/release.yml']
     - action: >-
-        For Story 4.4 (PUB-003): releases/latest/download/... URLs return 404 and will keep doing so
-        until a non-prerelease exists, which is AC10 of this story working as designed.
+        Story 4.4 PUB-003 resolved on 2026-09-15: with v1.0.0 published, the latest URLs resolve to
+        it and never to a pre-release — this story's AC10 observed working in both states.
       refs: ['docs/qa/gates/4.4-document-binary-installation.yml']
     - action: >-
         REL-001 (gate 3.3) is unchanged and still unowned.
@@ -230,16 +233,16 @@ carry_forward_register:
     - { id: 'PUB-001', originating_gate: '4.2', resolved_in: '4.2', resolved_on: '2026-09-15' }
     - { id: 'PUB-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15' }
     - { id: 'CI-002', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15', note: 'Proven on a runner by the v0.0.9-rc2 run 35008908643.' }
+    - { id: 'PUB-003', originating_gate: '4.4', resolved_in: '4.4', resolved_on: '2026-09-15', note: 'Verified against v1.0.0; gate 4.4 holds the detail and the most recent register.' }
   open:
     - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Audit command 2 matches its own quotation; use the PEM-anchored pattern on any re-run. Advisory, low.' }
-    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 and v0.0.9-rc2 instead of v0.9.0-rc1; substance met, PO acceptance to record.' }
-    - { id: 'PUB-003', originating_gate: '4.4', owner: 'maintainer', reason: 'Story 4.4 AC10; latest URLs need a non-prerelease (v1.0.0). See gate 4.4, whose register is the most recent.' }
+    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'AC12 rehearsed on v0.0.9-rc1 and v0.0.9-rc2 instead of v0.9.0-rc1; substance met. With v1.0.0 tagged, only PO acceptance remains possible.' }
   tracked_non_blocking_no_home:
     - { id: 'REL-001', originating_gate: '3.3', reason: 'Not actionable until broker ACLs exist' }
     - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, re-assessed at publication in Story 4.2 and left unchanged' }
   register_status: >-
-    PUB-001, PUB-002 and CI-002 leave the register. Two low items remain open (TEST-002, REQ-001),
-    neither blocking, plus PUB-003 which belongs to gate 4.4.
+    PUB-001, PUB-002, CI-002 and PUB-003 leave the register. Two low items remain open (TEST-002,
+    REQ-001), neither blocking.
 
 history:
   - at: '2026-07-29T00:00:00Z'
@@ -269,3 +272,9 @@ history:
       warnings or annotations, Go still go1.23.12 under GOTOOLCHAIN=local, digest check active,
       nine assets and all checksums verified, binaries carrying 0.0.9-rc2 and commit 698235b.
       CI-002 resolved. REQ-001 stays open: the rehearsal tag is again v0.0.9-rcN.
+  - at: '2026-09-15T00:00:00Z'
+    gate: PASS
+    note: >-
+      v1.0.0 released from ec06841 by run 35010177508 (release.yml identical to the rc2-rehearsed
+      blob; no annotation; not a pre-release; binaries go1.23.12, version 1.0.0). REQ-001's literal
+      remedy is no longer possible; it awaits PO acceptance only.
