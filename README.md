@@ -200,7 +200,7 @@ URL, so it keeps serving that exact version forever. A later `2.0.0` with breaki
 changes can never appear underneath a script that pinned:
 
 ```bash
-curl -LO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/mqtt2bdd_1.2.3_linux_amd64.tar.gz
+curl -fLO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/mqtt2bdd_1.2.3_linux_amd64.tar.gz
 ```
 
 **Latest** — use this for a first manual try. It follows the newest non-pre-release version
@@ -209,8 +209,12 @@ between one run and the next. This is why the alias archives carry no version in
 the `latest` URL requires an asset name that stays the same across releases:
 
 ```bash
-curl -LO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/mqtt2bdd_linux_amd64.tar.gz
+curl -fLO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/mqtt2bdd_linux_amd64.tar.gz
 ```
+
+`latest` never points at a pre-release. While only release candidates have been published, every `latest` URL returns 404: use the pinned form with the candidate's tag instead.
+
+The `-f` in every `curl` command in this section is deliberate. Without it, an HTTP error such as a 404 is saved under the archive's name and `curl` still exits 0, so the failure only surfaces later, as a confusing error from `tar` about the archive format. With it, `curl` stops at the step that actually failed.
 
 ### Verify the download
 
@@ -219,10 +223,10 @@ from a different version will not match anything you have:
 
 ```bash
 # If you took the pinned URL above:
-curl -LO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/checksums.txt
+curl -fLO https://github.com/hagnerk/mqtt2bdd/releases/download/v1.2.3/checksums.txt
 
 # If you took the latest URL above:
-curl -LO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/checksums.txt
+curl -fLO https://github.com/hagnerk/mqtt2bdd/releases/latest/download/checksums.txt
 ```
 
 Then verify, naming whichever archive you actually downloaded:
@@ -259,18 +263,25 @@ URL. The contents are identical either way:
 ```bash
 tar -xzf mqtt2bdd_1.2.3_linux_amd64.tar.gz
 ./mqtt2bdd
-# time=... level=INFO msg="MQTT2BDD starting" component=main event=starting version=1.2.3
+# time=... level=ERROR msg="configuration error" component=main event=config_load_failed operation=load_config error="required environment variable MQTT_BROKER is not set"
+```
+
+That error is the expected result of a first run, not a broken download: the binary works, it simply has not been told where its broker and database are yet — see [What the binary still needs](#what-the-binary-still-needs). Once the required variables are set, the first line reports the version the binary was built from:
+
+```text
+time=... level=INFO msg="MQTT2BDD starting" component=main event=starting version=1.2.3
 ```
 
 The Linux binaries are statically linked (`CGO_ENABLED=0` — no libc, no dynamic loader), so they
 have no runtime dependency at all: no package to install, no container to run them in.
 
-**On macOS, the binary is unsigned**, and Gatekeeper will refuse to run it with a dialog that
-suggests the file is damaged. It is not. Clear the quarantine attribute once:
+**On macOS, the binary is unsigned.** A browser marks what it downloads as quarantined, `tar` carries that mark over to the extracted binary, and Gatekeeper then refuses to run it with a dialog that suggests the file is damaged. It is not. Clear the quarantine attribute once:
 
 ```bash
-xattr -d com.apple.quarantine ./mqtt2bdd
+xattr -d com.apple.quarantine ./mqtt2bdd 2>/dev/null || true
 ```
+
+`curl` does not set the quarantine attribute, so after a `curl` download there is usually nothing to clear; `2>/dev/null || true` keeps the command harmless either way.
 
 ### What the binary still needs
 
@@ -281,10 +292,7 @@ A binary alone is not a working system. Before the first run you need:
 - **A PostgreSQL database with the `sensor_metrics` schema applied.** The schema is
   [`prod/init-db/01-schema.sql`](prod/init-db/01-schema.sql) — apply it once with
   `psql -f prod/init-db/01-schema.sql`.
-- **Environment variables** telling the application where those two are. Every variable, its
-  default, and whether it is required is in [Configuration](#configuration). Without them the
-  application logs `event=starting` and then exits non-zero when it fails to connect — which is
-  the most common reason a first run "does not work".
+- **Environment variables** telling the application where those two are. Every variable, its default, and whether it is required is in [Configuration](#configuration). Without them the application exits immediately with `event=config_load_failed`, naming the first required variable it could not find. With them set but the broker or the database unreachable, it logs `event=starting`, then `event=startup_aborted`, and exits non-zero. Those two are the most common reasons a first run "does not work".
 
 ### Pinning to a version range
 
@@ -296,15 +304,16 @@ If a script needs "the newest 1.x", list the releases and pick the tag yourself,
 pinned URL from it:
 
 ```bash
-TAG=$(curl -s https://api.github.com/repos/hagnerk/mqtt2bdd/releases \
+TAG=$(curl -fs https://api.github.com/repos/hagnerk/mqtt2bdd/releases \
   | jq -r '.[] | select(.prerelease | not) | .tag_name' \
   | grep '^v1\.' | head -1)
-curl -LO "https://github.com/hagnerk/mqtt2bdd/releases/download/${TAG}/mqtt2bdd_${TAG#v}_linux_amd64.tar.gz"
+[ -n "$TAG" ] || { echo "no matching release" >&2; exit 1; }
+curl -fLO "https://github.com/hagnerk/mqtt2bdd/releases/download/${TAG}/mqtt2bdd_${TAG#v}_linux_amd64.tar.gz"
 ```
 
-That endpoint is unauthenticated and therefore rate-limited to 60 requests per hour per IP. A
-script that polls it will eventually get an error response rather than a release list, and the
-failure is not obvious — handle it, or cache the resolved tag.
+The guard line matters. When nothing matches, `TAG` is empty, and without the guard the script would build a URL with no tag in it and download nothing.
+
+That endpoint is unauthenticated and therefore rate-limited to 60 requests per hour per IP. Past the limit it answers with an error instead of a release list: `-f` makes that `curl` fail, `TAG` comes out empty, and the same guard stops the script. A script that runs often should still cache the resolved tag.
 
 ## Quick Start
 
