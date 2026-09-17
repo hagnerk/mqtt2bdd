@@ -42,9 +42,10 @@ type Client struct {
 	dbName string
 	logger *slog.Logger
 
-	connected   atomic.Bool   // outcome of the most recent database interaction
-	lastWriteAt atomic.Int64  // Unix nanoseconds of the last successful write; 0 means never
-	writeCount  atomic.Uint64 // monotonic count of successful writes since startup
+	connected     atomic.Bool   // outcome of the most recent database interaction
+	lastWriteAt   atomic.Int64  // Unix nanoseconds of the last successful write; 0 means never
+	writeCount    atomic.Uint64 // monotonic count of successful writes since startup
+	rejectedCount atomic.Uint64 // monotonic count of messages rejected since startup
 }
 
 // NewClient constructs a Client with the connection string derived from cfg.
@@ -118,8 +119,11 @@ func (c *Client) Close() {
 }
 
 // IsConnected reports whether the most recent database interaction succeeded: the
-// startup ping, or the last write attempted since. It performs no network call and
-// costs a single atomic load, so it is safe to call at any cadence.
+// startup ping, or the last write attempted since. A write the database refused for its
+// content counts as a successful interaction, since the database answered; an empty
+// payload skipped or invalid JSON rejected locally is no interaction and changes nothing.
+// It performs no network call and costs a single atomic load, so it is safe to call at
+// any cadence.
 func (c *Client) IsConnected() bool {
 	return c.connected.Load()
 }
@@ -138,6 +142,14 @@ func (c *Client) LastWriteAt() time.Time {
 // monotonic and never reset; a per-interval rate is a delta the caller computes.
 func (c *Client) WriteCount() uint64 {
 	return c.writeCount.Load()
+}
+
+// RejectedCount returns the total number of messages rejected since startup, whether
+// locally (invalid JSON) or by PostgreSQL (a data, constraint or limit error). Skipped
+// empty payloads are not counted. It is monotonic and never reset; a per-interval rate
+// is a delta the caller computes.
+func (c *Client) RejectedCount() uint64 {
+	return c.rejectedCount.Load()
 }
 
 // LogPoolStats logs the current connection pool statistics at DEBUG level.

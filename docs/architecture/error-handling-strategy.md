@@ -274,11 +274,12 @@ Step 2 never touches content PostgreSQL accepts: escaped controls `\u0001`–`\u
 var ErrRejected = errors.New("message rejected by database")
 
 func isPermanent(err error) bool {
-    var pgErr *pgconn.PgError
-    if !errors.As(err, &pgErr) {
+    code := sqlState(err) // pgErr.Code found with errors.As, or "" when err is not a *pgconn.PgError
+    // PostgreSQL always sends five characters, but a synthetic PgError may carry fewer.
+    if len(code) < 2 {
         return false
     }
-    switch pgErr.Code[:2] {
+    switch code[:2] {
     case "22", "23", "54":
         return true
     }
@@ -633,7 +634,7 @@ The enumerated values these fields may take — every `component`, `event` and `
 | `Message buffer high utilization` (>80%) | WARN | Check database performance, buffer draining | Investigate within 10 min |
 | `Duplicate message ignored` | WARN | Normal (idempotent), no action needed | Monitor frequency |
 | `Message dropped: channel full` | ERROR | Database slow or down, investigate immediately | < 5 min |
-| `Invalid JSON payload` | WARN | Check device/broker, investigate data source | Non-urgent |
+| `Message rejected` (`write_rejected`) | ERROR | That message is discarded, the others keep flowing. Identify the source from `topic`, `payload_size`, `reason` and `sqlstate` (the body is on the DEBUG `message_received` entry) and fix the publisher | Same day: data from that source is being lost |
 
 **Escalation Path:**
 1. **Self-healing** (0-5 min): Automatic retries handle transient failures

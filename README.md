@@ -24,14 +24,11 @@ graceful shutdown — patterns worth studying whether or not you ever deploy it.
 - In-memory buffered channel decoupling MQTT reception from database writes, with backpressure:
   the producer blocks once the buffer (`BUFFER_SIZE`, default 1000) is full, rather than
   dropping messages silently.
-- Automatic insert retry on database outage — a message is retried every 10 seconds until it
-  succeeds, so no message is lost during an outage.
+- Automatic insert retry on database outage — a message that fails for a transient reason (connection lost, database unavailable, missing privilege) is retried every 10 seconds until it succeeds, so no message is lost during an outage. A message the database can never accept (invalid JSON, or refused by PostgreSQL with a data, constraint or limit error) is discarded and logged at ERROR as `write_rejected` instead of retried, so it cannot stall the messages behind it; empty payloads (MQTT's way of clearing a retained message) are skipped.
 - Idempotent writes via `INSERT ... ON CONFLICT (sensor, date) DO NOTHING`.
 - Graceful shutdown on SIGTERM/SIGINT: stops the MQTT client, drains all buffered messages
   (bounded by a 30-second timeout), then closes the database pool in order.
-- Periodic health-check log line (every 60 seconds): MQTT/database connection status, buffer
-  utilization, and time since the last successful write, plus a separate WARN when buffer
-  utilization exceeds 80%.
+- Periodic health-check log line (every 60 seconds): MQTT/database connection status, buffer utilization, time since the last successful write, and messages written and rejected since the previous line (`processed_last_interval`, `rejected_last_interval`), plus a separate WARN when buffer utilization exceeds 80%.
 - Structured, human-readable logging (`log/slog` text handler) with per-component tagging
   (`main`, `mqtt`, `database`) and UTC timestamps.
 - Statically-linked, minimal production Docker image (~18.5 MB, measured), running as a
@@ -104,8 +101,9 @@ mqtt2bdd/
 │       ├── main.go                      # Coordinator: goroutines, signals, graceful shutdown
 │       ├── main_test.go                 # Unit tests for main.go's pure helpers
 │       ├── integration_helpers_test.go  # //go:build integration — shared test scaffolding
-│       ├── mqtt_reconnect_integration_test.go  # //go:build integration
-│       └── shutdown_integration_test.go        # //go:build integration
+│       ├── mqtt_reconnect_integration_test.go   # //go:build integration
+│       ├── shutdown_integration_test.go         # //go:build integration
+│       └── write_rejection_integration_test.go  # //go:build integration
 ├── internal/
 │   ├── config/                          # Environment variable loading (LoadConfig)
 │   ├── logger/                          # Structured logging wrapper (log/slog)
@@ -584,9 +582,7 @@ As a learning aid:
 
 - Unit tests live alongside the code they test: `internal/config`, `internal/logger`,
   `internal/mqtt`, `internal/database`, and `cmd/mqtt2bdd` (`main_test.go`).
-- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go`
-  and three files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`,
-  `mqtt_reconnect_integration_test.go`, and `shutdown_integration_test.go`.
+- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go` and four files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`, `mqtt_reconnect_integration_test.go`, `shutdown_integration_test.go`, and `write_rejection_integration_test.go`.
 
 ## Troubleshooting
 
@@ -606,6 +602,7 @@ As a learning aid:
   the application blocks the producer rather than dropping messages, so the operator's window
   to react is the remaining buffer headroom (`BUFFER_SIZE`, default 1000 messages, roughly ten
   minutes of downtime at 100 messages/minute).
+- **`write_rejected` ERROR log line.** The database can never store that message, so it was discarded; the other messages keep flowing. `topic`, `payload_size`, `reason` (`invalid_json` or `sqlstate`) and `sqlstate` identify it; its body is on the DEBUG `message_received` line. By contrast, a `write_failure` repeating every 10 seconds points at the environment (connection, privilege, missing table) and is retried on purpose until it is fixed.
 - **Health check reports `unhealthy` but the container is not restarted.** This is by design,
   stated in `docker-compose.prod.yml`'s own comment: `restart:` reacts to container *exit*, not
   to `unhealthy` status; watch `docker compose ps` or point an external watchdog at it.

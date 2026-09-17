@@ -47,7 +47,7 @@ Exactly one `event` per log call.
 | `mqtt` | `connecting`, `connected`, `connect_timeout`, `connect_failed`, `connection_lost`, `reconnecting`, `reconnect_failed`, `reconnected`, `reconnect_cancelled`, `disconnected`, `subscribing`, `subscribed`, `subscribe_failed`, `resubscribe_failed`, `message_received` |
 | `database` | `connecting`, `connected`, `connect_failed`, `disconnected`, `write_success`, `write_failure`, `write_duplicate`, `write_rejected`, `write_skipped`, `payload_sanitized`, `topic_truncated`, `pool_stats` |
 
-`message_excluded`, `write_rejected`, `write_skipped` and `payload_sanitized` are specified by Epic 5 (Stories 5.1–5.3) ahead of their implementation.
+`write_rejected` and `write_skipped` are implemented (Story 5.1). `payload_sanitized` (Story 5.2) and `message_excluded` (Story 5.3) are specified by Epic 5 ahead of their implementation.
 
 `unknown_log_level` is emitted from the `logger` package itself but tagged `component=main`, because
 it reports on the application's own configuration rather than on the logger as a subsystem.

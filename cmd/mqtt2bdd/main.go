@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math"
 	"os"
@@ -53,8 +54,11 @@ const bufferHighWaterMarkPercent = 80.0
 // Version is injected at build time via ldflags. Defaults to "dev" for local builds.
 var Version = "dev"
 
-// insertWithRetry writes a single message, retrying every defaultRetryIntervalOnDatabaseFailure
-// until the insert succeeds, so no message is lost during a database outage. ctx bounds each
+// insertWithRetry writes a single message, retrying a transient failure every
+// defaultRetryIntervalOnDatabaseFailure until the insert succeeds, so no message is lost during a
+// database outage. A message the database rejected (database.ErrRejected) is not retried: this
+// writer is the buffer's only consumer, so retrying a message that can never be stored would
+// stall every message behind it. ctx bounds each
 // individual insert attempt (defaultInsertAttemptTimeout) and, when it carries a deadline (the
 // shutdown drain path), also bounds how long the retry loop as a whole may run: steady-state
 // callers pass context.Background(), which never expires, so normal-operation retries stay
@@ -64,11 +68,11 @@ func insertWithRetry(ctx context.Context, dbClient *database.Client, msg mqtt.Me
 		attemptCtx, cancel := context.WithTimeout(ctx, defaultInsertAttemptTimeout)
 		err := dbClient.InsertMessage(attemptCtx, msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
 		cancel()
-		if err == nil {
-			return
+		if err == nil || errors.Is(err, database.ErrRejected) {
+			return // stored, or never storable: either way the message leaves the buffer now
 		}
-		// error already logged by InsertMessage; hold this message and retry after delay,
-		// unless ctx itself has run out of budget (only possible on the drain path).
+		// Transient failure, already logged by InsertMessage: hold this message and retry
+		// after delay, unless ctx itself has run out of budget (only possible on the drain path).
 		select {
 		case <-time.After(defaultRetryIntervalOnDatabaseFailure):
 		case <-ctx.Done():
@@ -77,8 +81,9 @@ func insertWithRetry(ctx context.Context, dbClient *database.Client, msg mqtt.Me
 	}
 }
 
-// dbWriterLoop is the sole consumer of msgChan. It writes each message (retrying until success,
-// ensuring no message is lost during a database outage). On shutdown, done is closed: the loop
+// dbWriterLoop is the sole consumer of msgChan. It writes each message, retrying transient
+// failures until success so no message is lost during a database outage, and discarding a
+// message the database rejected so it cannot stall the ones behind it. On shutdown, done is closed: the loop
 // drains any messages still buffered and then exits. msgChan is never closed, so producers can
 // never panic with "send on closed channel". shutdownCtx bounds only the drain branch — the
 // steady-state branch always passes context.Background(), so the "no message lost during a
@@ -149,6 +154,7 @@ func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database
 	defer ticker.Stop()
 
 	var lastWriteCount uint64
+	var lastRejectedCount uint64
 
 	for {
 		select {
@@ -162,6 +168,11 @@ func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database
 			processed := total - lastWriteCount
 			lastWriteCount = total
 
+			// RejectedCount is monotonic too.
+			totalRejected := dbClient.RejectedCount()
+			rejected := totalRejected - lastRejectedCount
+			lastRejectedCount = totalRejected
+
 			lastWriteAgeSeconds := writeAgeSeconds(dbClient.LastWriteAt(), time.Now())
 
 			l.Info("health check",
@@ -173,6 +184,7 @@ func healthCheckLoop(l *slog.Logger, mqttClient *mqtt.Client, dbClient *database
 				"buffer_capacity", capacity,
 				"buffer_utilization_percent", utilization,
 				"processed_last_interval", processed,
+				"rejected_last_interval", rejected,
 			)
 
 			// A separate entry, not a field on the line above: severity is a property

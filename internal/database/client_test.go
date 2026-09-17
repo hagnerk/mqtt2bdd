@@ -2,6 +2,8 @@ package database_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -51,6 +53,61 @@ func TestClientHealthZeroValues(t *testing.T) {
 			t.Errorf("WriteCount() = %d, want 0", got)
 		}
 	})
+
+	t.Run("rejected count is zero before any write", func(t *testing.T) {
+		t.Parallel()
+		if got := c.RejectedCount(); got != 0 {
+			t.Errorf("RejectedCount() = %d, want 0", got)
+		}
+	})
+}
+
+// TestInsertMessage_LocalChecks covers the payloads InsertMessage settles before any
+// database round-trip. The client has never connected, so its pool is nil: had either
+// path used the pool, the call would panic, which is what proves the database is not
+// contacted. Neither path is a database interaction or a write, so the health fields
+// must not move.
+func TestInsertMessage_LocalChecks(t *testing.T) {
+	tests := []struct {
+		name         string
+		payload      json.RawMessage
+		wantRejected bool
+		wantCount    uint64
+	}{
+		{name: "empty payload is skipped", payload: json.RawMessage{}, wantRejected: false, wantCount: 0},
+		{name: "nil payload is skipped", payload: nil, wantRejected: false, wantCount: 0},
+		{name: "invalid JSON is rejected", payload: json.RawMessage("online"), wantRejected: true, wantCount: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{PostgresHost: "localhost", PostgresPort: 5432, PostgresDB: "test", PostgresUser: "test"}
+			c := database.NewClient(cfg, logger.NewLogger("ERROR", io.Discard))
+
+			err := c.InsertMessage(context.Background(), "test/local", time.Now(), tt.payload)
+
+			if tt.wantRejected {
+				if !errors.Is(err, database.ErrRejected) {
+					t.Errorf("InsertMessage() = %v, want an error wrapping ErrRejected", err)
+				}
+			} else if err != nil {
+				t.Errorf("InsertMessage() = %v, want nil", err)
+			}
+			if got := c.RejectedCount(); got != tt.wantCount {
+				t.Errorf("RejectedCount() = %d, want %d", got, tt.wantCount)
+			}
+			if got := c.WriteCount(); got != 0 {
+				t.Errorf("WriteCount() = %d, want 0", got)
+			}
+			if got := c.LastWriteAt(); !got.IsZero() {
+				t.Errorf("LastWriteAt() = %v, want the zero time", got)
+			}
+			if c.IsConnected() {
+				t.Error("IsConnected() = true, want false")
+			}
+		})
+	}
 }
 
 // TestConnect_InvalidDSN exercises Connect's pgxpool.ParseConfig failure branch

@@ -5,12 +5,14 @@ package database_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hagnerk/mqtt2bdd/internal/config"
@@ -157,12 +159,18 @@ func TestInsertMessage_Error(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := client.InsertMessage(ctx, sensor, ts, json.RawMessage(`{}`)); err == nil {
+	err := client.InsertMessage(ctx, sensor, ts, json.RawMessage(`{}`))
+	if err == nil {
 		t.Fatal("expected error with cancelled context, got nil")
+	}
+	// A transient error classified as permanent would discard a message the next
+	// attempt could have stored.
+	if errors.Is(err, database.ErrRejected) {
+		t.Fatalf("a cancelled context is transient, got an error wrapping ErrRejected: %v", err)
 	}
 
 	var count int
-	err := pool.QueryRow(context.Background(),
+	err = pool.QueryRow(context.Background(),
 		"SELECT COUNT(*) FROM sensor_metrics WHERE sensor = $1 AND date = $2",
 		sensor, ts).Scan(&count)
 	if err != nil {
@@ -170,5 +178,55 @@ func TestInsertMessage_Error(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected no row written after failed insert, got %d", count)
+	}
+}
+
+// TestInsertMessage_Rejected covers a payload that passes json.Valid but that PostgreSQL
+// refuses for its content: a number beyond the numeric range (SQLSTATE 22003). It is the
+// only direct evidence that a server rejection leaves the client connected and the write
+// fields untouched, which the subprocess test cannot observe before its first health tick.
+func TestInsertMessage_Rejected(t *testing.T) {
+	client, cfg := newTestClient(t)
+	pool := newVerificationPool(t, cfg)
+
+	sensor := "test/integration/rejected"
+	ts := time.Now().UTC().Truncate(time.Microsecond)
+	writeCountBefore := client.WriteCount()
+	lastWriteBefore := client.LastWriteAt()
+	rejectedBefore := client.RejectedCount()
+
+	err := client.InsertMessage(context.Background(), sensor, ts, json.RawMessage(`{"v":1e1000000}`))
+
+	if !errors.Is(err, database.ErrRejected) {
+		t.Fatalf("expected an error wrapping ErrRejected, got %v", err)
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("expected the error to still wrap a *pgconn.PgError, got %v", err)
+	}
+	if pgErr.Code != "22003" {
+		t.Errorf("SQLSTATE = %s, want 22003", pgErr.Code)
+	}
+	if !client.IsConnected() {
+		t.Error("IsConnected() = false after a server rejection, want true: the database answered")
+	}
+	if got := client.WriteCount(); got != writeCountBefore {
+		t.Errorf("WriteCount() = %d, want %d: nothing was written", got, writeCountBefore)
+	}
+	if got := client.LastWriteAt(); !got.Equal(lastWriteBefore) {
+		t.Errorf("LastWriteAt() = %v, want %v: nothing was written", got, lastWriteBefore)
+	}
+	if got := client.RejectedCount(); got != rejectedBefore+1 {
+		t.Errorf("RejectedCount() = %d, want %d", got, rejectedBefore+1)
+	}
+
+	var count int
+	err = pool.QueryRow(context.Background(),
+		"SELECT COUNT(*) FROM sensor_metrics WHERE sensor = $1", sensor).Scan(&count)
+	if err != nil {
+		t.Fatalf("verification query failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no row written after a rejection, got %d", count)
 	}
 }

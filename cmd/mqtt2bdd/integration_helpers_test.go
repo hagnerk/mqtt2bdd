@@ -195,6 +195,19 @@ func (a *testApp) hasEvent(event string) bool {
 	return false
 }
 
+// eventLines returns every captured line so far that carries event=event, in capture
+// order, without waiting or failing the test.
+func (a *testApp) eventLines(event string) []string {
+	re := regexp.MustCompile(`event=` + regexp.QuoteMeta(event) + `(\s|$)`)
+	var matched []string
+	for _, line := range a.allLines() {
+		if re.MatchString(line) {
+			matched = append(matched, line)
+		}
+	}
+	return matched
+}
+
 // terminate sends SIGTERM to the subprocess, mirroring the SIGTERM a real deployment's
 // container stop delivers.
 func (a *testApp) terminate(t *testing.T) {
