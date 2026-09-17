@@ -60,12 +60,14 @@ type Config struct {
     // Application Configuration
     LogLevel    string // DEBUG, INFO, ERROR
     BufferSize  int    // Message channel capacity (default: 1000)
+    ExcludeTopics []string // MQTT topic filters whose messages are never persisted (default: none)
 }
 ```
 
 **Validation Rules:**
 - Required fields: MQTT broker/port, PostgreSQL connection details
-- Optional fields: MQTT auth (for anonymous brokers), BufferSize (default 1000)
+- Optional fields: MQTT auth (for anonymous brokers), BufferSize (default 1000), ExcludeTopics (default none)
+- `MQTT_EXCLUDE_TOPICS` is a comma-separated list of MQTT 3.1.1 topic filters; each is validated at startup (`#` only as a whole final level, `+` only as a whole level), and an invalid filter aborts startup
 - Log level defaults to INFO if invalid/missing
 
 ## Component: Structured Logger
@@ -164,7 +166,7 @@ type MessageHandler func(topic string, payload []byte)
 
 ## Component: Database Client
 
-**Responsibility:** Manage PostgreSQL connection pool, execute INSERT operations, automatic reconnection, and connection health monitoring
+**Responsibility:** Manage PostgreSQL connection pool, execute INSERT operations, automatic reconnection, connection health monitoring, and payload integrity (repair refusable content, classify write errors as transient or permanent)
 
 **Key Interfaces:**
 - `NewClient(config *Config, logger *slog.Logger) *Client` - Constructor
@@ -174,6 +176,8 @@ type MessageHandler func(topic string, payload []byte)
 - `IsConnected() bool` - Report the outcome of the most recent database interaction (no network call)
 - `LastWriteAt() time.Time` - Time of the last successful write, or the zero value
 - `WriteCount() uint64` - Monotonic count of successful writes since startup
+- `RejectedCount() uint64` - Monotonic count of messages rejected since startup (Epic 5)
+- `ErrRejected` - Sentinel returned (wrapped) by `InsertMessage` for a message that must not be retried (Epic 5)
 - `LogPoolStats()` - Log the current connection pool statistics at DEBUG level
 
 **Dependencies:**
@@ -209,7 +213,10 @@ ON CONFLICT (sensor, date) DO NOTHING;  -- Idempotent insert
 **Error Handling:**
 - Connection errors: Trigger reconnection loop
 - Constraint violations (duplicate): Log WARNING, continue (idempotent)
-- Other errors: Log ERROR with full context, continue processing
+- Content the database would refuse but that can be repaired (`\u0000`, unpaired surrogate escapes, invalid UTF-8): replace with U+FFFD, log WARN
+- Permanent errors (invalid JSON, SQLSTATE class 22, 23 or 54): log ERROR `write_rejected`, return `ErrRejected`, never retried
+- Other errors: Log ERROR with full context; the caller retries
+- See [Error Handling Strategy §3](./error-handling-strategy.md#3-runtime-errors---data-integrity-log-and-skip)
 
 ## Component: Message Buffer (Channel)
 

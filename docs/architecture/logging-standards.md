@@ -43,9 +43,11 @@ Exactly one `event` per log call.
 
 | Component | `event` values |
 |-----------|----------------|
-| `main` | `starting`, `unknown_log_level`, `config_load_failed`, `config_loaded`, `buffer_initialised`, `writer_started`, `health_monitor_started`, `startup_complete`, `startup_aborted`, `buffer_full`, `buffer_high`, `message_dropped`, `health_check`, `shutdown_signal`, `flush_complete`, `flush_timeout`, `shutdown_complete` |
+| `main` | `starting`, `unknown_log_level`, `config_load_failed`, `config_loaded`, `buffer_initialised`, `writer_started`, `health_monitor_started`, `startup_complete`, `startup_aborted`, `buffer_full`, `buffer_high`, `message_dropped`, `message_excluded`, `health_check`, `shutdown_signal`, `flush_complete`, `flush_timeout`, `shutdown_complete` |
 | `mqtt` | `connecting`, `connected`, `connect_timeout`, `connect_failed`, `connection_lost`, `reconnecting`, `reconnect_failed`, `reconnected`, `reconnect_cancelled`, `disconnected`, `subscribing`, `subscribed`, `subscribe_failed`, `resubscribe_failed`, `message_received` |
-| `database` | `connecting`, `connected`, `connect_failed`, `disconnected`, `write_success`, `write_failure`, `write_duplicate`, `topic_truncated`, `pool_stats` |
+| `database` | `connecting`, `connected`, `connect_failed`, `disconnected`, `write_success`, `write_failure`, `write_duplicate`, `write_rejected`, `write_skipped`, `payload_sanitized`, `topic_truncated`, `pool_stats` |
+
+`message_excluded`, `write_rejected`, `write_skipped` and `payload_sanitized` are specified by Epic 5 (Stories 5.1–5.3) ahead of their implementation.
 
 `unknown_log_level` is emitted from the `logger` package itself but tagged `component=main`, because
 it reports on the application's own configuration rather than on the logger as a subsystem.
@@ -59,25 +61,31 @@ what was being attempted: `load_config`, `connect`, `reconnect`, `subscribe`, `p
 Entries that report a *state* rather than a failed attempt carry **no** `operation`, whatever their
 level — there is no operation to name. These are `connection_lost` at ERROR, and `buffer_full`,
 `buffer_high`, `message_dropped`, `flush_timeout`, `write_duplicate`, `topic_truncated`,
-`unknown_log_level` at WARN.
+`payload_sanitized`, `unknown_log_level` at WARN.
 
 `connection_lost` is the single ERROR in that list, and the reason the rule is not phrased "every
 ERROR carries an operation": the broker dropped the link on its own, no local call was attempted, so
 any `operation` value would be fabricated.
+
+`write_rejected` reports a failed attempt and carries `operation=insert`, like `write_failure`. The two differ in what follows: a `write_failure` is retried, a `write_rejected` message is discarded.
 
 ## Domain Fields
 
 | Area | Fields |
 |------|--------|
 | Message processing (`write_success` / `write_failure` / `write_duplicate`) | `topic`, `payload_size` (bytes), `duration_us` (microseconds — see note below), `timestamp` (RFC 3339, the message's own timestamp; `write_success`/`write_duplicate` only, distinct from the log entry's own `time`), `query` (the literal SQL text executed; `write_success` only, DEBUG level) |
+| Write rejection (`write_rejected`) | `topic`, `payload_size` (bytes), `duration_us` (`0` for a local rejection), `reason` (`invalid_json` for a local rejection, `sqlstate` for a server one), `sqlstate` (the five-character code; `reason=sqlstate` only). The payload body is never included |
+| Write skip (`write_skipped`, DEBUG only) | `topic`, `reason` (`empty_payload`) |
+| Payload repair (`payload_sanitized`) | `topic`, `payload_size` (bytes, before repair), `nul_escapes`, `lone_surrogates`, `invalid_utf8_sequences` (one count per repair kind) |
+| Topic exclusion (`message_excluded`, DEBUG only) | `topic`, `filter` (the `MQTT_EXCLUDE_TOPICS` entry that matched) |
 | Message reception (`message_received`, DEBUG only) | `topic`, `payload_size` (bytes), `payload` (the raw message payload as a string; DEBUG-only and level-guarded so the conversion cost is not paid at INFO) |
 | Sensor name truncation (`topic_truncated`) | `original_length` (rune-count of the sensor name before truncation), `truncated_topic` (the truncated, last-255-rune sensor name actually used for the insert) |
 | Reconnection (`reconnecting` / `reconnect_failed`) | `attempt` (1-based reconnect attempt counter) |
 | Connection pool (`pool_stats`, DEBUG only) | `acquired_conns`, `idle_conns`, `total_conns`, `max_conns` — the four `pgxpool.Stat()` counters; `max_conns` is the configured ceiling (`internal/database/client.go`'s `maxConns`), not a live count |
 | Log level validation (`unknown_log_level`) | `level` (the raw, unrecognized `LOG_LEVEL` value the operator supplied — distinct from `log_level`/`effective_log_level` below, which are always valid) |
-| Health check (`health_check`) | `mqtt_status`, `db_status`, `db_last_write_age_s` (`-1` ⇒ no successful write since startup), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent`, `processed_last_interval` |
+| Health check (`health_check`) | `mqtt_status`, `db_status`, `db_last_write_age_s` (`-1` ⇒ no successful write since startup), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent`, `processed_last_interval`, `rejected_last_interval` (messages discarded by `write_rejected` since the previous entry) |
 | Buffer pressure (`buffer_full` / `buffer_high`) | `buffer_size` (`buffer_full` only — the configured channel capacity, `cfg.BufferSize`; also emitted at startup on `config_loaded`, see below — the field is genuinely shared across both areas, not mis-filed in one), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent` (`buffer_high` only) |
-| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size` (`config_loaded` — same field as the `buffer_full` row above), `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
+| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size` (`config_loaded` — same field as the `buffer_full` row above), `exclude_topics` (`config_loaded` — the parsed `MQTT_EXCLUDE_TOPICS` list), `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
 
 `failed_component` is deliberately not `component`: an entry naming a culprit is still emitted by
 `main`, and `component` must keep identifying the emitter.

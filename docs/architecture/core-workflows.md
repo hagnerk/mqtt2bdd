@@ -314,6 +314,10 @@ msgChan := make(chan Message, 1000)  // Application channel
 | **MQTT outage** | Auto-reconnect every 10s, resubscribe on connect | Automatic when broker recovers | **Yes** (messages during outage never received) |
 | **Channel full** (DB very slow) | MQTT handler blocks, Paho buffers internally | Unblocks when DB writer drains channel | **Depends** (no if Paho buffer sufficient, yes if Paho also fills) |
 | **Duplicate message** | UNIQUE constraint violation on (sensor, date) | Log WARNING, skip (idempotent via ON CONFLICT) | **No** (duplicate rejected) |
+| **Payload with repairable content** (`\u0000`, unpaired surrogate escape, invalid UTF-8) | Repaired to U+FFFD, WARN `payload_sanitized` | Immediate | **No** (content visibly altered) |
+| **Payload the database can never accept** (invalid JSON, SQLSTATE class 22/23/54) | Discarded, ERROR `write_rejected`, never retried | Immediate; the next message proceeds | **Yes** (that message only) |
+| **Empty payload** (clears a retained message) | Skipped, DEBUG `write_skipped` | Immediate | **No** (nothing to store) |
+| **Excluded topic** (`MQTT_EXCLUDE_TOPICS`) | Dropped before buffering, DEBUG `message_excluded` | N/A | **No** (excluded by configuration) |
 | **Graceful shutdown** (SIGTERM) | Drain both buffers before exit (< 30s) | Clean shutdown with flush | **No** |
 | **Forced kill** (SIGKILL) | Immediate termination, no cleanup | None | **Yes** (all buffered messages lost) |
 

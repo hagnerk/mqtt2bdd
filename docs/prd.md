@@ -26,6 +26,7 @@ MQTT2BDD bridges this gap as a standalone Go application that subscribes to all 
 | 2026-07-25 | 0.2.0   | Epic 2 alignment - Story 2.5 AC9/AC10, Story 2.6 AC2/AC4/AC7 | PO (Sarah)      |
 | 2026-07-27 | 0.3.0   | Epic 4 added - module rename + public binary distribution    | PO (Sarah)      |
 | 2026-07-29 | 0.3.1   | Story 4.1 AC2/AC3 file counts realigned (8 -> 9 Go files, 18 -> 19 story files) | PO (Sarah)      |
+| 2026-09-17 | 0.4.0   | Epic 5 added - write pipeline hardening; FR1, FR6, FR8 amended; FR11, FR12 added | PO (Sarah)      |
 
 Amendments are recorded inline, in a blockquote beneath the acceptance criteria of the story
 they affect, so a reader arriving at an AC always finds the reason it reads as it does.
@@ -36,16 +37,18 @@ they affect, so a reader arriving at an AC always finds the reason it reads as i
 
 ### Functional Requirements
 
-1. **FR1:** The application must subscribe to all MQTT topics using wildcard (`#`) on a configured MQTT broker and receive messages in real-time
+1. **FR1:** The application must subscribe to all MQTT topics using wildcard (`#`) on a configured MQTT broker and receive messages in real-time, discarding before buffering any message whose topic matches an optional, operator-supplied list of MQTT topic filters
 2. **FR2:** The application must parse each MQTT message to extract topic (sensor identifier), timestamp, and JSON payload
 3. **FR3:** The application must insert normalized records into PostgreSQL `sensor_metrics` table with columns: sensor (VARCHAR), date (TIMESTAMP), metrics (JSONB)
 4. **FR4:** The application must detect MQTT broker disconnections and automatically reconnect with fixed 10-second retry interval
 5. **FR5:** The application must detect PostgreSQL database disconnections and automatically reconnect with fixed 10-second retry interval
-6. **FR6:** The application must buffer incoming MQTT messages in memory (capacity: 1000 messages) to handle temporary database outages without message loss
+6. **FR6:** The application must buffer incoming MQTT messages in memory (capacity: 1000 messages) to handle temporary database outages without message loss. This guarantee covers failures of the database, not of a message: a payload the database can never accept is handled by FR11
 7. **FR7:** The application must handle SIGTERM/SIGINT signals gracefully, flushing all buffered messages to database before shutdown
-8. **FR8:** The application must accept configuration exclusively via environment variables (MQTT host/port/credentials, PostgreSQL connection string, log level)
+8. **FR8:** The application must accept configuration exclusively via environment variables (MQTT host/port/credentials, PostgreSQL connection string, log level, buffer size, topic exclusion list)
 9. **FR9:** The application must implement structured logging with levels (INFO, DEBUG, ERROR) for startup, shutdown, connection events, message processing, and errors
 10. **FR10:** The application must log all critical lifecycle events including: application start/stop, MQTT connection established/lost, database connection established/lost, and write failures with context
+11. **FR11:** A single message must never stall the pipeline. A payload the database can never accept — one that is not valid JSON, or one the database rejects with a SQLSTATE of class 22 (data exception), 23 (integrity constraint violation) or 54 (program limit exceeded) — must be discarded immediately and logged at ERROR. Every other write failure keeps being retried as per FR5. An empty payload, which MQTT uses to clear a retained message, is skipped without being treated as an error
+12. **FR12:** Before insertion, the application must repair the content PostgreSQL would refuse but that can be repaired without guesswork, replacing it with the Unicode replacement character U+FFFD: the JSON escape `\u0000`, unpaired UTF-16 surrogate escapes, and invalid UTF-8 byte sequences. Each repaired message is logged at WARN
 
 ### Non-Functional Requirements
 
@@ -138,6 +141,10 @@ Create optimized production Dockerfile (multi-stage Alpine build distinct from d
 ### Epic 4: Public Release & Binary Distribution
 
 Publish the repository on GitHub under an MIT license and automate the production of downloadable, statically-linked binaries for four platforms on every version tag, so that anyone can install MQTT2BDD with a single `curl` command without cloning the repository or installing a Go toolchain.
+
+### Epic 5: Write Pipeline Hardening
+
+Stop a single invalid message from stalling persistence: classify database write errors into transient and permanent, repair the payload content PostgreSQL refuses when that can be done without guesswork, and let operators exclude topics that carry configuration rather than measurements.
 
 ---
 
@@ -850,4 +857,96 @@ path semantics to handle. That window closes the moment Story 4.2 pushes.
 
 ---
 
+## Epic 5: Write Pipeline Hardening
 
+**Epic Goal:** Guarantee that no single MQTT message can stop MQTT2BDD from persisting the others. Today one payload PostgreSQL refuses is retried forever by the only database writer, the buffer fills, reception blocks, and — because the offending message is retained by the broker — a restart reproduces the stall at once.
+
+This epic is brownfield and corrective: it was drafted after v1.0.0 shipped, following a production incident on `zigbee2mqtt/bridge/definitions` (SQLSTATE 22P05, `\u0000` in a 283 KB payload). The full analysis, including a probe of what PostgreSQL 15 actually rejects, is recorded in `docs/sprint-change-proposals/2026-09-17-write-pipeline-stall.md`.
+
+### Epic Context
+
+**Existing system context:**
+
+- `insertWithRetry` (`cmd/mqtt2bdd/main.go`) retries every insert error every 10 seconds without limit, and `dbWriterLoop` is the single consumer of the buffer.
+- `InsertMessage` (`internal/database/queries.go`) forwards the payload to a `JSONB NOT NULL` column as `json.RawMessage`; `pgx` does not validate it, so PostgreSQL is the only judge of its content.
+- `docs/architecture/error-handling-strategy.md` already defines a *Data Integrity (Log and Skip)* category (§3) that was never implemented: this epic implements it.
+- The subscription filter is hard-coded to `#`; no configuration exists to narrow it.
+
+**Enhancement details:**
+
+- Story 5.1 separates permanent from transient write errors. Story 5.2 repairs the content that can be repaired. Story 5.3 lets operators exclude topics.
+- Release plan: 5.1 and 5.2 ship as **v1.0.1** (bug fixes); 5.3 ships as **v1.1.0** (new configuration variable).
+
+**Compatibility requirements:**
+
+- No schema change. No new Go dependency.
+- A valid payload is written exactly as today: same SQL, same retry behaviour on outages, same log entries.
+- `MQTT_EXCLUDE_TOPICS` is optional; when unset, the application subscribes to and stores everything, as in v1.0.0.
+
+**Risk mitigation:**
+
+- **Primary risk:** classifying a transient error as permanent silently drops messages that would have been stored after recovery. *Mitigation:* the permanent set is a closed list of three SQLSTATE classes, all describing the value being written. Classes that describe the environment stay retried — connection (08), resources (53), operator intervention (57), system (58), transaction conflicts (40), internal (XX) — and so do class 42 errors (missing privilege, missing table). A class 42 error hits every message identically, and an operator can fix it, as happened on 2026-09-17 with a missing grant.
+- **Secondary risk:** stored JSON differs from what the device published. *Mitigation:* only content PostgreSQL would refuse is touched, always with the visible U+FFFD, and every repair is logged. `jsonb` never stored payloads byte-for-byte anyway: it reorders keys, drops duplicate keys and normalises whitespace.
+- **Rollback plan:** each story is independently revertible with `git revert`. Reverting 5.1 restores the stall.
+
+### Story 5.1: Stop Retrying Writes the Database Can Never Accept
+
+**As an** operator,
+**I want** a message the database can never store to be discarded and logged instead of retried forever,
+**so that** one bad payload cannot stop every other message from being persisted.
+
+**Acceptance Criteria:**
+
+1. Write errors are classified inside `internal/database` as either *permanent* or *transient*. The classification is exposed to callers as a sentinel error matchable with `errors.Is` (for example `database.ErrRejected`), so `cmd/mqtt2bdd` never imports `pgconn` or reasons about SQLSTATE codes
+2. An error is permanent if and only if it is a `*pgconn.PgError` (found with `errors.As`, so wrapping does not hide it) whose SQLSTATE class is `22`, `23` or `54`. Every other error is transient, including non-PostgreSQL errors, context deadlines, and SQLSTATE classes `08`, `40`, `42`, `53`, `57`, `58` and `XX`
+3. Before any database round-trip, a payload that fails `json.Valid` is rejected locally with the same sentinel, without contacting the database
+4. A zero-length payload (MQTT's way of clearing a retained message) is skipped before any round-trip: logged at DEBUG with `event=write_skipped` and `reason=empty_payload`, not counted as rejected, not treated as an error by the caller
+5. When the error is permanent, `insertWithRetry` returns immediately — no 10-second wait — on both the steady-state path and the shutdown drain path, and the writer moves on to the next buffered message
+6. A rejection is logged once, at ERROR, with `event=write_rejected`, `operation=insert`, `topic`, `payload_size`, `duration_us`, `reason` (`invalid_json` for a local rejection, `sqlstate` for a server one), `sqlstate` (server rejections only) and `error`. The payload body is never logged. `write_failure` keeps meaning "this write will be retried" and is no longer emitted for rejections
+7. A server-side rejection proves the database answered, so it leaves the client connected: `connected` is set to `true`, never `false`. `lastWriteAt` and `writeCount` are not updated, because nothing was written
+8. The database client exposes a monotonic rejection counter, and the `health_check` entry gains a `rejected_last_interval` field computed like `processed_last_interval`
+9. Unit tests cover the classification with synthetic `*pgconn.PgError` values — at least `22P05`, `22P02`, `22021`, `22003`, `23502` and `54001` as permanent, and `08006`, `40P01`, `42501`, `42P01`, `53100`, `57P01` and `XX000` as transient — plus a wrapped `PgError`, a plain error and `context.DeadlineExceeded`
+10. An integration test publishes, in this order, a non-JSON payload, a payload PostgreSQL rejects server-side (`{"v":1e1000000}`, which passes `json.Valid` and keeps failing after Story 5.2), an empty payload, and a valid payload. The valid row is stored well within the 10-second retry interval, the first three are absent, and two `write_rejected` entries are logged
+11. `docs/architecture/error-handling-strategy.md`, `docs/architecture/logging-standards.md` and the README's troubleshooting and data-loss sections describe the new behaviour
+12. Verification passes through the containerized toolchain from `dev/` — `gofmt -l .`, `go vet ./...`, `staticcheck ./...`, `go test ./...` — and `./test/run-integration-tests.sh` passes from the repository root
+
+### Story 5.2: Repair Payload Content PostgreSQL Refuses
+
+**As an** operator,
+**I want** payload content that PostgreSQL refuses but that can be repaired safely to be repaired rather than discarded,
+**so that** a large, legitimate message such as `zigbee2mqtt/bridge/definitions` is stored instead of lost.
+
+**Acceptance Criteria:**
+
+1. `internal/database` repairs the payload before the checks of Story 5.1, replacing each defect with U+FFFD:
+   - a JSON `\u0000` escape becomes `\uFFFD`, in keys and values alike, and only when its backslash starts an escape, meaning it is preceded by an even number of backslashes (zero included). `"\\u0000"` is literal text and stays untouched, while `"\\\u0000"` is repaired
+   - an unpaired UTF-16 surrogate escape becomes `\uFFFD`: a high surrogate (`\uD800`–`\uDBFF`) not immediately followed by a low surrogate escape, or a low surrogate (`\uDC00`–`\uDFFF`) not immediately preceded by a high one. Valid pairs stay untouched, and hex digits are matched case-insensitively
+   - each maximal invalid UTF-8 byte sequence (including CESU-8 encoded surrogates and overlong forms) becomes the UTF-8 encoding of U+FFFD
+2. Nothing else is transformed. Escaped control characters `\u0001`–`\u001F`, noncharacters such as `\uFFFF`, and valid surrogate pairs are accepted by PostgreSQL and pass through byte-for-byte. Numeric overflow and structural errors are not repairable and remain rejected by Story 5.1
+3. A payload needing no repair is returned unchanged without allocating, verified by a test using `testing.AllocsPerRun`
+4. A repaired message is logged once at WARN with `event=payload_sanitized`, no `operation` (it reports a state, not a failed attempt), `topic`, `payload_size`, and one count per repair kind: `nul_escapes`, `lone_surrogates`, `invalid_utf8_sequences`
+5. Unit tests cover every repairable case of the proposal's probe table, backslash runs of length 1 to 4 before `u0000`, an escape at the very end of the payload, several defects in one payload, and a payload containing none
+6. An integration test publishes `{"a":"x\u0000y"}`, a lone surrogate and a raw `0xff` byte, and finds each stored with U+FFFD in place of the defect
+7. The README states that stored JSON may differ from the published payload in this way, and that the database must use the `UTF8` encoding
+8. Verification passes as in Story 5.1, AC12
+
+### Story 5.3: Exclude Topics from Persistence
+
+**As an** operator,
+**I want** to list MQTT topic filters whose messages are not stored,
+**so that** configuration traffic such as `zigbee2mqtt/bridge/#` does not fill `sensor_metrics`.
+
+**Acceptance Criteria:**
+
+1. A new optional environment variable `MQTT_EXCLUDE_TOPICS` holds a comma-separated list of MQTT topic filters. Surrounding whitespace is trimmed, empty entries are ignored, and an unset or empty value excludes nothing
+2. Each filter is validated at startup against MQTT 3.1.1 §4.7: `#` only as a whole, final level; `+` only as a whole level; no NUL character. An invalid filter aborts startup with `event=config_load_failed`, naming the offending filter
+3. Matching follows MQTT semantics: `+` matches exactly one level; `#` matches the parent level and any number of child levels (`a/#` matches `a`); empty levels are significant; matching is case-sensitive; a topic starting with `$` is not matched by a filter starting with a wildcard
+4. An excluded message is dropped in the reception handler before it reaches the buffer, and is not counted by `processed_last_interval`
+5. Each exclusion is logged at DEBUG with `event=message_excluded`, `topic` and the matching `filter`; nothing is logged per message at INFO
+6. The `config_loaded` entry reports the parsed list as `exclude_topics`
+7. The subscription stays `#`: MQTT has no negative subscription, so excluded payloads still cross the network. The README states this
+8. `MQTT_EXCLUDE_TOPICS` is documented in the README configuration table (with `zigbee2mqtt/bridge/#` as the example), in `.env.prod.example`, and passed through in `docker-compose.prod.yml`. `docs/architecture/components.md` and `docs/architecture/logging-standards.md` are updated
+9. Unit tests cover filter validation, the matching rules above including the examples of MQTT 3.1.1 §4.7, and configuration parsing. An integration test shows that a message on an excluded topic is absent and a message on another topic is stored
+10. Verification passes as in Story 5.1, AC12
+
+---

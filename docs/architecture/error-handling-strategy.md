@@ -215,12 +215,12 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 
 **Retry Configuration:**
 - **Interval:** Fixed 10 seconds (simple, predictable)
-- **Max attempts:** Infinite for database writes (retry until success)
+- **Max attempts:** Infinite for *transient* database write failures; permanent rejections are never retried (see §3)
 - **Max attempts:** Infinite for MQTT reconnection (Paho handles internally)
 
 **Architecture Rationale:**
 - **Separation of concerns:** `InsertMessage()` does the INSERT, caller handles retry strategy
-- **Resilience:** DB Writer goroutine never gives up on a message (retries indefinitely)
+- **Resilience:** DB Writer goroutine never gives up on a message while its failure is transient (retries indefinitely)
 - **Observability:** Each retry logged with context
 - **Simplicity:** Fixed interval avoids exponential backoff complexity
 
@@ -243,75 +243,78 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 
 ### 3. Runtime Errors - Data Integrity (Log and Skip)
 
-**Category:** Constraint violations, invalid data
+**Category:** a message whose own content the database can never store. Retrying it cannot succeed, and because `dbWriterLoop` is the single consumer of the buffer, retrying it would stall every message queued behind it. Specified by Epic 5, after the production incident recorded in `docs/sprint-change-proposals/2026-09-17-write-pipeline-stall.md`.
 
-**Examples:**
-- Duplicate message (UNIQUE constraint violation on sensor+date)
-- Invalid JSON payload (malformed MQTT message)
-- NULL constraint violation (unlikely with proper code)
+**Handling Strategy: repair what can be repaired, reject the rest, never retry it**
 
-**Handling Strategy: Log WARNING and Continue**
+`internal/database` runs these steps in order before the INSERT:
 
-**Duplicate Detection (Already Handled):**
+| Step | Condition | Outcome | Log entry |
+|------|-----------|---------|-----------|
+| 1 | Zero-length payload (MQTT's way of clearing a retained message) | Skipped; not an error | DEBUG `write_skipped`, `reason=empty_payload` |
+| 2 | `\u0000` escape, unpaired UTF-16 surrogate escape, invalid UTF-8 byte sequence | Replaced with U+FFFD | WARN `payload_sanitized`, once per message, with one count per repair kind |
+| 3 | `json.Valid` fails | Rejected locally, no round-trip | ERROR `write_rejected`, `reason=invalid_json` |
+| 4 | INSERT fails with a SQLSTATE of class 22, 23 or 54 | Rejected | ERROR `write_rejected`, `reason=sqlstate`, `sqlstate=<code>` |
+
+Step 2 never touches content PostgreSQL accepts: escaped controls `\u0001`–`\u001F`, noncharacters such as `\uFFFF`, and valid surrogate pairs pass through byte-for-byte. A `\u0000` is repaired only when its backslash starts an escape (preceded by an even number of backslashes): `"\\u0000"` is literal text.
+
+**Write Error Classification:**
+
+| SQLSTATE class | Meaning | Classification | Reason |
+|----------------|---------|----------------|--------|
+| `22` | Data exception | Permanent | The value is invalid for the column: `22P05` (`\u0000`), `22P02` (invalid JSON, unpaired surrogate), `22021` (invalid UTF-8), `22003` (number out of `numeric` range) |
+| `23` | Integrity constraint violation | Permanent | The row breaks a constraint: `23502` (NULL payload). `23505` never surfaces, because `ON CONFLICT DO NOTHING` absorbs duplicates |
+| `54` | Program limit exceeded | Permanent | The value exceeds a server limit: `54001` (nesting depth), `54000` (`jsonb` size) |
+| `08`, `40`, `53`, `57`, `58`, `XX` | Connection, transaction conflict, resources, operator intervention, system, internal | Transient | They describe the environment, which recovers |
+| `42` | Syntax error or access rule violation | Transient | It hits every message identically, and an operator can fix it (a missing `GRANT`, a missing table). Waiting keeps the buffered messages |
+| n/a | Not a `*pgconn.PgError` (network error, context deadline) | Transient | No answer came from the database |
+
 ```go
-// Already implemented in InsertMessage via RowsAffected() check
+// internal/database — callers match the sentinel and never see SQLSTATE codes.
+var ErrRejected = errors.New("message rejected by database")
+
+func isPermanent(err error) bool {
+    var pgErr *pgconn.PgError
+    if !errors.As(err, &pgErr) {
+        return false
+    }
+    switch pgErr.Code[:2] {
+    case "22", "23", "54":
+        return true
+    }
+    return false
+}
+
+// cmd/mqtt2bdd — insertWithRetry
+err := dbClient.InsertMessage(attemptCtx, msg.Topic, msg.Timestamp, json.RawMessage(msg.Payload))
+if err == nil || errors.Is(err, database.ErrRejected) {
+    return // stored, or never storable: either way the message leaves the buffer now
+}
+```
+
+**Duplicate Detection (unchanged):**
+```go
+// InsertMessage checks RowsAffected(): zero means ON CONFLICT (sensor, date) skipped the row.
 if commandTag.RowsAffected() == 0 {
-    c.logger.Warn("Duplicate message ignored (conflict on sensor+date)",
-        "sensor", sensor,
-        "timestamp", timestamp.Format(time.RFC3339),
-    )
+    c.logger.Warn("duplicate message ignored", "event", "write_duplicate", ...)
 }
 // No error returned - idempotent behavior
 ```
 
-**Invalid JSON Payload Handling:**
-```go
-func (h *MessageHandler) HandleMessage(topic string, payload []byte) {
-    // Optional: Validate JSON before sending to channel
-    // PostgreSQL JSONB will also validate, but early validation helps debugging
-    var temp map[string]interface{}
-    if err := json.Unmarshal(payload, &temp); err != nil {
-        h.logger.Warn("Invalid JSON payload, skipping message",
-            "error", err,
-            "topic", topic,
-            "payload", string(payload),  // Full payload for debugging
-        )
-        return  // Skip this message
-    }
-
-    // Create message
-    msg := Message{
-        Topic:     topic,
-        Timestamp: time.Now(),
-        Payload:   payload,
-    }
-
-    // Send to channel (with timeout to handle backpressure)
-    select {
-    case h.msgChan <- msg:
-        // Successfully sent
-    case <-time.After(30 * time.Second):
-        // Channel full for 30 seconds - drop message
-        h.logger.Error("Message dropped: channel full for 30s",
-            "topic", topic,
-            "buffer_size", len(h.msgChan),
-            "buffer_capacity", cap(h.msgChan),
-        )
-    }
-}
+**Example Log Output (illustrative):**
 ```
-
-**Example Log Output:**
-```
-2026-02-13T14:40:00Z WARN Invalid JSON payload, skipping message error="unexpected end of JSON input" topic=zigbee2mqtt/broken/sensor payload="{invalid json data that is malformed"
-2026-02-13T14:40:05Z WARN Duplicate message ignored (conflict on sensor+date) sensor=bedroom/temp timestamp=2026-02-13T14:40:05Z
+level=WARN msg="payload sanitized" component=database event=payload_sanitized topic=zigbee2mqtt/bridge/definitions payload_size=283574 nul_escapes=1 lone_surrogates=0 invalid_utf8_sequences=0
+level=ERROR msg="message rejected" component=database event=write_rejected operation=insert topic=sensors/broken payload_size=17 duration_us=0 reason=invalid_json error="message rejected by database: invalid JSON"
+level=ERROR msg="message rejected" component=database event=write_rejected operation=insert topic=sensors/huge payload_size=18 duration_us=640 reason=sqlstate sqlstate=22003 error="ERROR: value overflows numeric format (SQLSTATE 22003)"
 ```
 
 **Rationale:**
-- Individual bad messages shouldn't crash the application
-- Log warnings for debugging/investigation (full payload for troubleshooting)
-- Continue processing subsequent messages
-- Idempotent behavior (duplicates safe to ignore)
+- A single bad message must never stall the pipeline: the writer is the buffer's only consumer.
+- `write_rejected` is an ERROR, not a WARN: a discarded message is lost data, and an operator filtering on `level=ERROR` must see it.
+- The payload body is never logged at ERROR: it can be large (`zigbee2mqtt/bridge/definitions` weighs about 283 KB). `topic` and `payload_size` identify the message; the DEBUG `message_received` entry carries the body when needed.
+- U+FFFD rather than deletion keeps each repair visible in the stored data. `jsonb` never stored payloads byte-for-byte anyway: it reorders keys, drops duplicate keys and normalises whitespace.
+- A server-side rejection is an answer from the database, so it leaves the client connected. Reporting `db_status=disconnected` would send the operator after the wrong problem.
+- **Prerequisite:** the database uses the `UTF8` encoding. Under another encoding, PostgreSQL rejects every non-ASCII escape with `22P05`, and those messages are discarded.
 
 ### 4. Runtime Errors - Resource Exhaustion (Backpressure)
 
@@ -663,6 +666,7 @@ MQTT2BDD's error handling emphasizes **resilience through automatic recovery** w
 - **Strictness:** Fail-fast at startup for misconfigurations
 - **Leniency:** Automatic infinite retry for transient network issues
 - **Safety:** Backpressure and message dropping (last resort) over crashes
+- **Isolation:** A message the database can never accept is repaired or discarded, never retried, so it cannot stall the messages behind it
 - **Observability:** Structured logs with full context for debugging
 
 All error handling follows Go idioms (explicit errors, no panics) and supports the project's educational objective by demonstrating production-grade error patterns without over-engineering.
