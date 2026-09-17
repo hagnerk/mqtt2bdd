@@ -58,11 +58,11 @@ var Version = "dev"
 // defaultRetryIntervalOnDatabaseFailure until the insert succeeds, so no message is lost during a
 // database outage. A message the database rejected (database.ErrRejected) is not retried: this
 // writer is the buffer's only consumer, so retrying a message that can never be stored would
-// stall every message behind it. ctx bounds each
-// individual insert attempt (defaultInsertAttemptTimeout) and, when it carries a deadline (the
-// shutdown drain path), also bounds how long the retry loop as a whole may run: steady-state
-// callers pass context.Background(), which never expires, so normal-operation retries stay
-// unbounded — only the drain path's ctx.Done() case is ever reachable.
+// stall every message behind it. ctx bounds each individual insert attempt
+// (defaultInsertAttemptTimeout) and, when it carries a deadline (the shutdown drain path), also
+// bounds how long the retry loop as a whole may run: steady-state callers pass
+// context.Background(), which never expires, so normal-operation retries stay unbounded — only
+// the drain path's ctx.Done() case is ever reachable.
 func insertWithRetry(ctx context.Context, dbClient *database.Client, msg mqtt.Message) {
 	for {
 		attemptCtx, cancel := context.WithTimeout(ctx, defaultInsertAttemptTimeout)
@@ -83,11 +83,11 @@ func insertWithRetry(ctx context.Context, dbClient *database.Client, msg mqtt.Me
 
 // dbWriterLoop is the sole consumer of msgChan. It writes each message, retrying transient
 // failures until success so no message is lost during a database outage, and discarding a
-// message the database rejected so it cannot stall the ones behind it. On shutdown, done is closed: the loop
-// drains any messages still buffered and then exits. msgChan is never closed, so producers can
-// never panic with "send on closed channel". shutdownCtx bounds only the drain branch — the
-// steady-state branch always passes context.Background(), so the "no message lost during a
-// database outage" invariant from Stories 1.8/2.3 is unchanged in normal operation.
+// message the database rejected so it cannot stall the ones behind it. On shutdown, done is
+// closed: the loop drains any messages still buffered and then exits. msgChan is never closed,
+// so producers can never panic with "send on closed channel". shutdownCtx bounds only the drain
+// branch — the steady-state branch always passes context.Background(), so the "no message lost
+// during a database outage" invariant from Stories 1.8/2.3 is unchanged in normal operation.
 func dbWriterLoop(msgChan <-chan mqtt.Message, dbClient *database.Client, done <-chan struct{}, shutdownCtx context.Context) {
 	for {
 		select {

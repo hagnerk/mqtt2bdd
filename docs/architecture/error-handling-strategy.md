@@ -158,16 +158,18 @@ func NewClient(cfg *Config, logger *slog.Logger) *Client {
 
 **Database Reconnection (Infinite Retry in DB Writer Goroutine):**
 
+Only transient failures are retried. A message the database can never store returns an error wrapping `database.ErrRejected` and leaves the buffer at once: see [§3](#3-runtime-errors---data-integrity-log-and-skip). The sample below is illustrative; the shipped loop is `insertWithRetry` in `cmd/mqtt2bdd/main.go`.
+
 ```go
 // DB Writer goroutine (in main.go)
 func dbWriterLoop(msgChan <-chan Message, dbClient *database.Client, logger *slog.Logger) {
     for msg := range msgChan {
-        // Retry indefinitely until success
+        // Retry transient failures indefinitely until success
         for {
             err := dbClient.InsertMessage(context.Background(), msg.Topic, msg.Timestamp, msg.Payload)
 
-            if err == nil {
-                // Success - move to next message
+            if err == nil || errors.Is(err, database.ErrRejected) {
+                // Stored, or never storable (see §3) - move to next message
                 break
             }
 

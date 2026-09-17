@@ -1,0 +1,151 @@
+schema: 1
+story: '5.1'
+story_title: 'Stop Retrying Writes the Database Can Never Accept'
+gate: PASS
+status_reason: >-
+  All twelve ACs are met and independently re-verified: fmt, vet, staticcheck, unit and integration
+  suites pass through the containers, and TestWriteRejection shows a valid message stored in 0.07 s
+  behind two rejected ones and an empty one. The primary risk (a transient error classified as
+  permanent) is pinned by table and integration tests. The two documentation-drift items found in
+  review (DOC-006, DOC-007) were fixed; one low item remains on the story file itself (DOC-008).
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-09-17T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues:
+  - id: 'DOC-008'
+    severity: low
+    finding: >-
+      docs/stories/5.1.story.md contains three raw NUL bytes where the text meant the literal escape
+      backslash-u0000 (Dev Notes: Context, classification table, and the same table's rendering). They
+      date from the draft (edf0e97). Git therefore treats the story as binary: `git diff` prints
+      "Bin", so review diffs of the story are unreadable.
+    suggested_action: >-
+      Replace each NUL byte with the six-character literal escape. Outside QA's write permission on
+      story files (QA Results only).
+    suggested_owner: sm
+    refs: ['docs/stories/5.1.story.md']
+
+resolved_issues:
+  - id: 'DOC-006'
+    severity: low
+    finding: >-
+      docs/architecture/error-handling-strategy.md, "Database Reconnection (Infinite Retry in DB
+      Writer Goroutine)", showed a writer retrying every error indefinitely, contradicting §3.
+    resolution: >-
+      The sample now exits on errors.Is(err, database.ErrRejected), its comment says only transient
+      failures are retried, and a lead-in paragraph links to §3 and names insertWithRetry as the
+      shipped loop.
+    verified_by: 'Quinn (Test Architect), 2026-09-17'
+  - id: 'DOC-007'
+    severity: low
+    finding: >-
+      docs/architecture/security.md, "Input Validation", showed json.Valid in an MQTT MessageHandler
+      logging at WARN with the payload body.
+    resolution: >-
+      Section rewritten from the shipped code: validation in InsertMessage, the empty-payload skip
+      and local json.Valid check quoted verbatim, write_rejected at ERROR without the body and why,
+      server-side rejection (SQLSTATE class 22/23/54) listed. Heading kept, so the index.md anchor
+      still resolves. A NUL byte introduced while editing was caught (git showed the file as binary)
+      and replaced with the literal escape; the file is plain UTF-8 text again.
+    verified_by: 'Quinn (Test Architect), 2026-09-17'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        Classification assumes a class 22 answer is always about the message. True with the current
+        schema (sensor truncated, date a time.Time); revisit if a column not derived from the message
+        is ever added to the INSERT.
+
+quality_score: 100
+expires: '2026-10-01T00:00:00Z'
+
+evidence:
+  tests_reviewed: 5
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    ac_partial: []
+    ac_gaps: []
+    notes: >-
+      Tests reviewed: TestIsPermanent, TestInsertMessage_LocalChecks, TestInsertMessage_Rejected,
+      TestInsertMessage_Error (new assertion), TestWriteRejection. AC5's drain path and AC8's
+      health field are verified by reading, as agreed in the story: both go through code shared with
+      a tested path (insertWithRetry; the processed_last_interval pattern).
+    qa_rerun_2026_09_17: >-
+      From dev/: gofmt -l . empty; go vet and staticcheck rc=0 with and without -tags=integration;
+      go test -count=1 ./... ok. From the root: ./test/run-integration-tests.sh rc=0, TestWriteRejection
+      0.07s, TestInsertMessage_Rejected 0.01s, cmd/mqtt2bdd 83.330s. go.mod/go.sum unchanged; no pgconn
+      import under cmd/.
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      Payload body never logged on write_rejected (asserted by the integration test); queries stay
+      parameterized; no new dependency.
+  performance:
+    status: PASS
+    notes: >-
+      One json.Valid scan per message; a local rejection saves the round-trip; a server rejection no
+      longer stalls the writer for 10 s per attempt.
+  reliability:
+    status: PASS
+    notes: >-
+      Closed permanent set (22/23/54), everything else retried; cancelled context proven transient;
+      server rejection keeps connected=true so db_status no longer lies; single stop condition shared
+      by steady-state and drain paths.
+  maintainability:
+    status: PASS
+    notes: >-
+      Rule in one place; recordRejection/recordWrite helpers keep InsertMessage readable; two godocs
+      left half-reflowed were rewrapped by QA (comments only).
+
+recommendations:
+  immediate: []
+  future:
+    - action: 'Fix DOC-008 (raw NUL bytes in the story file, low).'
+      refs: ['docs/stories/5.1.story.md']
+    - action: >-
+        Story 5.2: insert the repair between Step 1 (empty payload) and Step 2 (json.Valid) in
+        InsertMessage, and extend TestIsPermanent only if the permanent set changes.
+      refs: ['internal/database/queries.go']
+
+refactoring_by_qa:
+  - file: 'cmd/mqtt2bdd/main.go'
+    change: 'Rewrapped insertWithRetry and dbWriterLoop godocs; no wording or code change.'
+  - file: 'docs/architecture/error-handling-strategy.md'
+    change: 'DOC-006: retry sample exits on ErrRejected; lead-in links to §3.'
+  - file: 'docs/architecture/security.md'
+    change: 'DOC-007: Input Validation section rewritten from the shipped code.'
+
+carry_forward_register:
+  open:
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Unchanged from gate 4.4. Advisory, low.' }
+    - { id: 'REQ-001', originating_gate: '4.3', owner: 'po', reason: 'Unchanged from gate 4.4. Low.' }
+    - { id: 'DOC-008', originating_gate: '5.1', owner: 'sm', reason: 'Raw NUL bytes in docs/stories/5.1.story.md make git treat it as binary. Low.' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Untouched by this story although healthCheckLoop was edited, as the story required.' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, unchanged.' }
+  resolved:
+    - { id: 'DOC-006', originating_gate: '5.1', resolved_in: '5.1', resolved_on: '2026-09-17' }
+    - { id: 'DOC-007', originating_gate: '5.1', resolved_in: '5.1', resolved_on: '2026-09-17' }
+  register_status: >-
+    Most recent register; supersedes gate 4.4's open list. Resolved entries are kept in gate 4.4.
+
+history:
+  - at: '2026-09-17T00:00:00Z'
+    gate: PASS
+    note: >-
+      First review. All twelve ACs met and re-verified by QA; two low documentation-drift items
+      opened (DOC-006, DOC-007); godoc rewrap performed by QA.
+  - at: '2026-09-17T00:00:00Z'
+    gate: PASS
+    note: >-
+      At the maintainer's request, QA fixed DOC-006 and DOC-007 in the architecture documents. While
+      checking the edited files for stray bytes, found DOC-008 (low, pre-existing NUL bytes in the
+      story file), left to the SM. Gate unchanged.

@@ -92,25 +92,29 @@ pgx automatically handles escaping for all parameter types. Since the applicatio
 
 ## Input Validation
 
-MQTT payloads are treated as **untrusted input**. Before being written to PostgreSQL, each payload is validated as well-formed JSON:
+MQTT payloads are treated as **untrusted input**. The MQTT client forwards every message to the buffer unchanged; validation happens in the database layer, in `InsertMessage` (`internal/database/queries.go`), just before the INSERT:
 
 ```go
-func (h *MessageHandler) HandleMessage(topic string, payload []byte) {
-    // Reject malformed JSON before it reaches the database layer
-    if !json.Valid(payload) {
-        h.logger.Warn("Invalid JSON payload, message discarded",
-            "topic",   topic,
-            "payload", string(payload),
-        )
-        return
-    }
-    // ... forward to channel
+// An empty payload is skipped: nothing to store, not an error.
+if len(metrics) == 0 {
+    c.logger.Debug("empty payload skipped", "event", "write_skipped", "topic", sensor, "reason", "empty_payload")
+    return nil
+}
+
+// A payload that is not JSON is rejected without contacting the database.
+if !json.Valid(metrics) {
+    rejectErr := fmt.Errorf("%w: invalid JSON", ErrRejected)
+    c.recordRejection(sensor, len(metrics), 0, rejectErr, "reason", "invalid_json")
+    return rejectErr
 }
 ```
 
+A rejected message is logged once, at ERROR, as `write_rejected`, with `topic` and `payload_size` but **never the payload body**: the body is untrusted, can be hundreds of kilobytes, and is already available on the DEBUG `message_received` entry when an operator needs it. A rejected message is discarded, not retried (see [Error Handling Strategy §3](./error-handling-strategy.md#3-runtime-errors---data-integrity-log-and-skip)).
+
 **What is validated:**
-- JSON syntax (via `json.Valid()`)
-- Payload is non-empty
+- Payload is non-empty (an empty payload is skipped, not rejected)
+- JSON syntax, locally (via `json.Valid()`)
+- Content PostgreSQL can store, server-side: a payload that passes `json.Valid` but that PostgreSQL refuses with a data, constraint or limit error (SQLSTATE class 22, 23 or 54, such as a `\u0000` escape or a number beyond the `numeric` range) is rejected the same way, with `reason=sqlstate`
 
 **What is not validated (intentional):**
 - JSON schema/field names — MQTT2BDD is device-agnostic by design; field validation is Grafana's responsibility at query time
