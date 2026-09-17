@@ -25,6 +25,7 @@ graceful shutdown — patterns worth studying whether or not you ever deploy it.
   the producer blocks once the buffer (`BUFFER_SIZE`, default 1000) is full, rather than
   dropping messages silently.
 - Automatic insert retry on database outage — a message that fails for a transient reason (connection lost, database unavailable, missing privilege) is retried every 10 seconds until it succeeds, so no message is lost during an outage. A message the database can never accept (invalid JSON, or refused by PostgreSQL with a data, constraint or limit error) is discarded and logged at ERROR as `write_rejected` instead of retried, so it cannot stall the messages behind it; empty payloads (MQTT's way of clearing a retained message) are skipped.
+- Repair of content PostgreSQL would refuse but that can be fixed without guesswork — a JSON `\u0000` escape, an unpaired UTF-16 surrogate escape (a lone `\ud83d`), invalid UTF-8 bytes: each defect is replaced with U+FFFD (`�`), the message is stored, and one WARN `payload_sanitized` line reports it. **The stored JSON may therefore differ from the published payload** in exactly that way (and, as always with `jsonb`, in key order, duplicate keys and whitespace). Everything else PostgreSQL accepts, such as `\\u0000` (literal text) or a valid surrogate pair, is stored as published.
 - Idempotent writes via `INSERT ... ON CONFLICT (sensor, date) DO NOTHING`.
 - Graceful shutdown on SIGTERM/SIGINT: stops the MQTT client, drains all buffered messages
   (bounded by a 30-second timeout), then closes the database pool in order.
@@ -102,6 +103,7 @@ mqtt2bdd/
 │       ├── main_test.go                 # Unit tests for main.go's pure helpers
 │       ├── integration_helpers_test.go  # //go:build integration — shared test scaffolding
 │       ├── mqtt_reconnect_integration_test.go   # //go:build integration
+│       ├── payload_repair_integration_test.go   # //go:build integration
 │       ├── shutdown_integration_test.go         # //go:build integration
 │       └── write_rejection_integration_test.go  # //go:build integration
 ├── internal/
@@ -287,9 +289,7 @@ A binary alone is not a working system. Before the first run you need:
 
 - **A reachable MQTT broker.** Any broker; the application subscribes to `#` and needs no
   per-sensor configuration.
-- **A PostgreSQL database with the `sensor_metrics` schema applied.** The schema is
-  [`prod/init-db/01-schema.sql`](prod/init-db/01-schema.sql) — apply it once with
-  `psql -f prod/init-db/01-schema.sql`.
+- **A PostgreSQL database using the `UTF8` encoding, with the `sensor_metrics` schema applied.** The schema is [`prod/init-db/01-schema.sql`](prod/init-db/01-schema.sql) — apply it once with `psql -f prod/init-db/01-schema.sql`. The database must use the `UTF8` encoding: under any other encoding PostgreSQL refuses every non-ASCII JSON escape (SQLSTATE `22P05`) and those messages are discarded. Check it with `SHOW server_encoding;`; the official `postgres` image used by the bundled stacks initialises with `UTF8`.
 - **Environment variables** telling the application where those two are. Every variable, its default, and whether it is required is in [Configuration](#configuration). Without them the application exits immediately with `event=config_load_failed`, naming the first required variable it could not find. With them set but the broker or the database unreachable, it logs `event=starting`, then `event=startup_aborted`, and exits non-zero. Those two are the most common reasons a first run "does not work".
 
 ### Pinning to a version range
@@ -582,7 +582,7 @@ As a learning aid:
 
 - Unit tests live alongside the code they test: `internal/config`, `internal/logger`,
   `internal/mqtt`, `internal/database`, and `cmd/mqtt2bdd` (`main_test.go`).
-- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go` and four files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`, `mqtt_reconnect_integration_test.go`, `shutdown_integration_test.go`, and `write_rejection_integration_test.go`.
+- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go` and five files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`, `mqtt_reconnect_integration_test.go`, `payload_repair_integration_test.go`, `shutdown_integration_test.go`, and `write_rejection_integration_test.go`.
 
 ## Troubleshooting
 
@@ -603,6 +603,7 @@ As a learning aid:
   to react is the remaining buffer headroom (`BUFFER_SIZE`, default 1000 messages, roughly ten
   minutes of downtime at 100 messages/minute).
 - **`write_rejected` ERROR log line.** The database can never store that message, so it was discarded; the other messages keep flowing. `topic`, `payload_size`, `reason` (`invalid_json` or `sqlstate`) and `sqlstate` identify it; its body is on the DEBUG `message_received` line. By contrast, a `write_failure` repeating every 10 seconds points at the environment (connection, privilege, missing table) and is retried on purpose until it is fixed.
+- **`payload_sanitized` WARN log line.** The message was stored, but with U+FFFD (`�`) in place of each piece of content PostgreSQL would have refused. `nul_escapes`, `lone_surrogates` and `invalid_utf8_sequences` count each kind of repair; `payload_size` is the size as received. The publisher is sending malformed data: fix it at the source if that data matters.
 - **Health check reports `unhealthy` but the container is not restarted.** This is by design,
   stated in `docker-compose.prod.yml`'s own comment: `restart:` reacts to container *exit*, not
   to `unhealthy` status; watch `docker compose ps` or point an external watchdog at it.

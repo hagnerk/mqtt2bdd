@@ -230,3 +230,57 @@ func TestInsertMessage_Rejected(t *testing.T) {
 		t.Fatalf("expected no row written after a rejection, got %d", count)
 	}
 }
+
+// TestInsertMessage_Sanitized covers a payload PostgreSQL would refuse three times over
+// (SQLSTATE 22P05, 22P02 and 22021) and that is stored once repaired: each defect reads
+// back as U+FFFD, while the literal \\u0000 text and the valid surrogate pair beside them
+// are stored as published.
+func TestInsertMessage_Sanitized(t *testing.T) {
+	client, cfg := newTestClient(t)
+	pool := newVerificationPool(t, cfg)
+
+	sensor := "test/integration/sanitized"
+	ts := time.Now().UTC().Truncate(time.Microsecond)
+	writeCountBefore := client.WriteCount()
+	rejectedBefore := client.RejectedCount()
+
+	// JSON escapes in raw strings, the invalid byte in an interpreted one.
+	payload := `{"nul":"x\u0000y","lone":"x\ud83dy","raw":"x` + "\xff" + `y","literal":"\\u0000","pair":"\ud83d\ude00"}`
+
+	err := client.InsertMessage(context.Background(), sensor, ts, json.RawMessage(payload))
+
+	if err != nil {
+		t.Fatalf("InsertMessage() error = %v, want nil: the payload should have been repaired", err)
+	}
+	if !client.IsConnected() {
+		t.Error("IsConnected() = false after a successful write, want true")
+	}
+	if got := client.WriteCount(); got != writeCountBefore+1 {
+		t.Errorf("WriteCount() = %d, want %d", got, writeCountBefore+1)
+	}
+	if got := client.RejectedCount(); got != rejectedBefore {
+		t.Errorf("RejectedCount() = %d, want %d: a repair is not a rejection", got, rejectedBefore)
+	}
+
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"nul", "x\uFFFDy"},
+		{"lone", "x\uFFFDy"},
+		{"raw", "x\uFFFDy"},
+		{"literal", `\u0000`},
+		{"pair", "\U0001F600"},
+	}
+	for _, tt := range tests {
+		var got string
+		err := pool.QueryRow(context.Background(),
+			"SELECT metrics->>$2 FROM sensor_metrics WHERE sensor = $1", sensor, tt.key).Scan(&got)
+		if err != nil {
+			t.Fatalf("verification query for key %q failed: %v", tt.key, err)
+		}
+		if got != tt.want {
+			t.Errorf("metrics->>%q = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}

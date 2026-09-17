@@ -47,7 +47,7 @@ Exactly one `event` per log call.
 | `mqtt` | `connecting`, `connected`, `connect_timeout`, `connect_failed`, `connection_lost`, `reconnecting`, `reconnect_failed`, `reconnected`, `reconnect_cancelled`, `disconnected`, `subscribing`, `subscribed`, `subscribe_failed`, `resubscribe_failed`, `message_received` |
 | `database` | `connecting`, `connected`, `connect_failed`, `disconnected`, `write_success`, `write_failure`, `write_duplicate`, `write_rejected`, `write_skipped`, `payload_sanitized`, `topic_truncated`, `pool_stats` |
 
-`write_rejected` and `write_skipped` are implemented (Story 5.1). `payload_sanitized` (Story 5.2) and `message_excluded` (Story 5.3) are specified by Epic 5 ahead of their implementation.
+`write_rejected` and `write_skipped` are implemented (Story 5.1), and `payload_sanitized` too (Story 5.2). Only `message_excluded` (Story 5.3) is specified by Epic 5 ahead of its implementation.
 
 `unknown_log_level` is emitted from the `logger` package itself but tagged `component=main`, because
 it reports on the application's own configuration rather than on the logger as a subsystem.
@@ -73,8 +73,8 @@ any `operation` value would be fabricated.
 
 | Area | Fields |
 |------|--------|
-| Message processing (`write_success` / `write_failure` / `write_duplicate`) | `topic`, `payload_size` (bytes), `duration_us` (microseconds — see note below), `timestamp` (RFC 3339, the message's own timestamp; `write_success`/`write_duplicate` only, distinct from the log entry's own `time`), `query` (the literal SQL text executed; `write_success` only, DEBUG level) |
-| Write rejection (`write_rejected`) | `topic`, `payload_size` (bytes), `duration_us` (`0` for a local rejection), `reason` (`invalid_json` for a local rejection, `sqlstate` for a server one), `sqlstate` (the five-character code; `reason=sqlstate` only). The payload body is never included |
+| Message processing (`write_success` / `write_failure` / `write_duplicate`) | `topic`, `payload_size` (bytes, as received, before any repair), `duration_us` (microseconds — see note below), `timestamp` (RFC 3339, the message's own timestamp; `write_success`/`write_duplicate` only, distinct from the log entry's own `time`), `query` (the literal SQL text executed; `write_success` only, DEBUG level) |
+| Write rejection (`write_rejected`) | `topic`, `payload_size` (bytes, as received, before any repair), `duration_us` (`0` for a local rejection), `reason` (`invalid_json` for a local rejection, `sqlstate` for a server one), `sqlstate` (the five-character code; `reason=sqlstate` only). The payload body is never included |
 | Write skip (`write_skipped`, DEBUG only) | `topic`, `reason` (`empty_payload`) |
 | Payload repair (`payload_sanitized`) | `topic`, `payload_size` (bytes, before repair), `nul_escapes`, `lone_surrogates`, `invalid_utf8_sequences` (one count per repair kind) |
 | Topic exclusion (`message_excluded`, DEBUG only) | `topic`, `filter` (the `MQTT_EXCLUDE_TOPICS` entry that matched) |

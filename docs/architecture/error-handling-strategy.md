@@ -260,6 +260,8 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 
 Step 2 never touches content PostgreSQL accepts: escaped controls `\u0001`–`\u001F`, noncharacters such as `\uFFFF`, and valid surrogate pairs pass through byte-for-byte. A `\u0000` is repaired only when its backslash starts an escape (preceded by an even number of backslashes): `"\\u0000"` is literal text.
 
+"Once per message" means once per `InsertMessage` call: `insertWithRetry` passes the original payload again after a transient failure, so a repaired message that meets a database outage logs `payload_sanitized` again on each attempt, next to each `write_failure`. Repairing once before the retry loop would have needed a new exported method and changes to `cmd/mqtt2bdd`, and a direct `InsertMessage` call would no longer repair.
+
 **Write Error Classification:**
 
 | SQLSTATE class | Meaning | Classification | Reason |

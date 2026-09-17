@@ -23,7 +23,10 @@ var ErrRejected = errors.New("message rejected by database")
 // writes. Logs DEBUG on success, WARN on duplicate, ERROR on failure.
 //
 // An empty payload (MQTT's way of clearing a retained message) is skipped without a
-// database round-trip and returns nil. A payload that is not valid JSON is rejected
+// database round-trip and returns nil. Content PostgreSQL would refuse but that can be
+// repaired safely (a \u0000 escape, an unpaired surrogate escape, invalid UTF-8) is then
+// replaced with U+FFFD and logged at WARN, and the repaired payload is what the rest of
+// the call checks and stores. A payload that is not valid JSON is rejected
 // locally, and one PostgreSQL refuses for its content (SQLSTATE class 22, 23 or 54) is
 // rejected after the round-trip: both return an error wrapping ErrRejected, which callers
 // must not retry. Every other error is transient and worth retrying.
@@ -43,11 +46,19 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 		c.logger.Debug("empty payload skipped", "event", "write_skipped", "topic", sensor, "reason", "empty_payload")
 		return nil
 	}
+	// Every entry for this message reports the size as received, so they can be correlated.
+	payloadSize := len(metrics)
 
-	// Step 2: a payload that is not JSON can never be stored, so the database is not asked.
+	// Step 2: repair what PostgreSQL would refuse, instead of losing the whole message.
+	metrics, repaired := sanitizePayload(metrics)
+	if repaired.total() > 0 {
+		c.logRepair(sensor, payloadSize, repaired)
+	}
+
+	// Step 3: a payload that is not JSON can never be stored, so the database is not asked.
 	if !json.Valid(metrics) {
 		rejectErr := fmt.Errorf("%w: invalid JSON", ErrRejected)
-		c.recordRejection(sensor, len(metrics), 0, rejectErr, "reason", "invalid_json")
+		c.recordRejection(sensor, payloadSize, 0, rejectErr, "reason", "invalid_json")
 		return rejectErr
 	}
 
@@ -60,7 +71,7 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 		// The database answered, so it is reachable; nothing was written, so the write
 		// fields stay as they are.
 		c.connected.Store(true)
-		c.recordRejection(sensor, len(metrics), elapsed, err, "reason", "sqlstate", "sqlstate", sqlState(err))
+		c.recordRejection(sensor, payloadSize, elapsed, err, "reason", "sqlstate", "sqlstate", sqlState(err))
 		return fmt.Errorf("failed to insert message for sensor %s: %w: %w", sensor, ErrRejected, err)
 	}
 	if err != nil {
@@ -69,15 +80,29 @@ func (c *Client) InsertMessage(ctx context.Context, sensor string, timestamp tim
 			"event", "write_failure",
 			"operation", "insert",
 			"topic", sensor,
-			"payload_size", len(metrics),
+			"payload_size", payloadSize,
 			"duration_us", elapsed.Microseconds(),
 			"error", err,
 		)
 		return fmt.Errorf("failed to insert message for sensor %s: %w", sensor, err)
 	}
 
-	c.recordWrite(sensor, timestamp, len(metrics), elapsed, commandTag.RowsAffected() == 0, query)
+	c.recordWrite(sensor, timestamp, payloadSize, elapsed, commandTag.RowsAffected() == 0, query)
 	return nil
+}
+
+// logRepair logs, once per call, that the payload was stored with U+FFFD in place of
+// refused content. It reports a state, not a failed attempt, so it carries no operation.
+// The payload body is never logged, for the same reason as in recordRejection.
+func (c *Client) logRepair(sensor string, payloadSize int, counts repairCounts) {
+	c.logger.Warn("payload sanitized",
+		"event", "payload_sanitized",
+		"topic", sensor,
+		"payload_size", payloadSize,
+		"nul_escapes", counts.nulEscapes,
+		"lone_surrogates", counts.loneSurrogates,
+		"invalid_utf8_sequences", counts.invalidUTF8Sequences,
+	)
 }
 
 // recordWrite updates the health fields after a completed INSERT and logs its outcome.
