@@ -319,7 +319,7 @@ level=ERROR msg="message rejected" component=database event=write_rejected opera
 - The payload body is never logged at ERROR: it can be large (`zigbee2mqtt/bridge/definitions` weighs about 283 KB). `topic` and `payload_size` identify the message; the DEBUG `message_received` entry carries the body when needed.
 - U+FFFD rather than deletion keeps each repair visible in the stored data. `jsonb` never stored payloads byte-for-byte anyway: it reorders keys, drops duplicate keys and normalises whitespace.
 - A server-side rejection is an answer from the database, so it leaves the client connected. Reporting `db_status=disconnected` would send the operator after the wrong problem.
-- **Prerequisite:** the database uses the `UTF8` encoding. Under another encoding, PostgreSQL rejects every non-ASCII escape with `22P05`, and those messages are discarded.
+- **Prerequisite:** the database uses the `UTF8` encoding. Under another encoding, PostgreSQL rejects with `22P05` every character that encoding cannot represent, escaped or raw, including the U+FFFD this repair writes: such messages are discarded, repaired or not. Characters the encoding can represent are accepted (probe, PostgreSQL 15.17, `LATIN1` database, UTF8 client as `pgx` uses: an escaped `é` is stored, an escaped `€` and an escaped U+FFFD are refused).
 
 ### 4. Runtime Errors - Resource Exhaustion (Backpressure)
 

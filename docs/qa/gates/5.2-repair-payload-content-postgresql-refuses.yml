@@ -1,0 +1,139 @@
+schema: 1
+story: '5.2'
+story_title: 'Repair Payload Content PostgreSQL Refuses'
+gate: PASS
+status_reason: >-
+  All eight ACs are met and independently re-verified: fmt, vet, staticcheck, unit and integration
+  suites pass through the containers, sanitize.go has full coverage, and a 17.8-million-execution
+  differential fuzz found no drift from Go's own JSON decoder. The one finding (DOC-009, an inaccurate
+  reason for the UTF8 prerequisite) was corrected by QA in the README and architecture §3.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-09-17T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+resolved_issues:
+  - id: 'DOC-009'
+    severity: low
+    finding: >-
+      README.md ("What the binary still needs") and docs/architecture/error-handling-strategy.md §3
+      said that under a non-UTF8 encoding PostgreSQL refuses every non-ASCII JSON escape. A probe on
+      PostgreSQL 15.17 (LATIN1 database, UTF8 client) shows that an escaped character the encoding
+      can represent is accepted, and that any character it cannot represent is refused with 22P05,
+      escaped or raw, including the U+FFFD the repair writes. The conclusion (UTF8 is required) held;
+      the reason was wrong and understated the impact.
+    resolution: >-
+      Both sentences rewritten from the probe: every unrepresentable character is refused, including
+      U+FFFD, so repaired messages would be discarded too. The README sentence repeating its bold
+      lead-in was removed. Both files re-scanned: no control byte.
+    verified_by: 'Quinn (Test Architect), 2026-09-17'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        The repair's correctness depends on every backslash being an escape start, which holds for
+        any payload that can be stored (C3). If a later story ever repairs content outside JSON
+        strings or before a different parser, revisit this assumption.
+      - >-
+        C2: a repaired message that meets a database outage logs payload_sanitized on every retry.
+        Documented and intended; expect bursts of WARN lines next to write_failure during an outage.
+
+quality_score: 100
+expires: '2026-10-01T00:00:00Z'
+
+evidence:
+  tests_reviewed: 5
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8]
+    ac_partial: []
+    ac_gaps: []
+    notes: >-
+      Tests reviewed: TestSanitizePayload (40 rows), TestSanitizePayload_NoAllocOnCleanPayload,
+      TestInsertMessage_Sanitized, TestPayloadRepair, and TestWriteRejection (unchanged, still
+      sqlstate=22003 for the unrepairable overflow). AC7 verified by reading the README.
+  qa_rerun_2026_09_17: >-
+    From dev/: gofmt -l . empty; go vet and staticcheck rc=0 with and without -tags=integration;
+    go test -count=1 ./... ok; sanitize.go coverage 100% for all nine functions. From the root:
+    ./test/run-integration-tests.sh rc=0 (after the QA doc edits), TestPayloadRepair 0.08s,
+    TestInsertMessage_Sanitized 0.01s, TestWriteRejection 0.07s, cmd/mqtt2bdd 83.397s. go.mod and
+    go.sum unchanged. No control byte in the changed files; literal U+FFFD only in Markdown examples.
+  qa_fuzz_2026_09_17: >-
+    Differential fuzz on a throwaway copy inside go-dev (not committed), 120 s, 17,792,543
+    executions, PASS. Properties: input not mutated; valid UTF-8 output; zero counts iff unchanged;
+    idempotent; json.Valid preserved; for valid JSON, Go's decoder reads the same document before
+    and after (NUL mapped to U+FFFD, U+FFFD runs collapsed).
+  qa_encoding_probe_2026_09_17: >-
+    PostgreSQL 15.17, throwaway LATIN1 database, PGCLIENTENCODING=UTF8: escaped é stored; escaped €
+    and escaped U+FFFD refused with 22P05; raw € refused. Database dropped afterwards.
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      Payload body never logged on payload_sanitized (asserted by the integration test); no new
+      dependency; the transform never panics on truncated or arbitrary input (fuzzed).
+  performance:
+    status: PASS
+    notes: >-
+      Single linear scan; zero allocation on a clean payload (AllocsPerRun); one allocation when a
+      repair is needed. Minor: valid multi-byte characters are decoded twice in nextNonASCII.
+  reliability:
+    status: PASS
+    notes: >-
+      Messages that stalled v1.0.0 and were discarded by 5.1 are now stored; unrepairable content
+      still takes 5.1's rejection path; health counters untouched by a repair.
+  maintainability:
+    status: PASS
+    notes: >-
+      Small helpers, named constants, why-comments; tests pin exact bytes and counts; the story's
+      byte-scan check guards against the escape-decoding tooling trap.
+
+recommendations:
+  immediate: []
+  future:
+    - action: >-
+        Optional: return the decoded size from a single utf8.DecodeRune call in nextNonASCII instead
+        of decoding valid characters twice.
+      refs: ['internal/database/sanitize.go']
+    - action: >-
+        Optional: commit a FuzzSanitizePayload target seeded from the Test Matrix, with the
+        properties listed in evidence.qa_fuzz_2026_09_17; its seeds run as unit tests at no cost.
+      refs: ['internal/database/sanitize_test.go']
+    - action: >-
+        Story 5.3 (topic exclusion): message_excluded is the last Epic 5 event not yet implemented;
+        update the status sentence in logging-standards.md when it lands.
+      refs: ['docs/architecture/logging-standards.md']
+
+refactoring_by_qa:
+  - file: 'README.md'
+    change: 'DOC-009: corrected the non-UTF8 encoding reason; removed a sentence repeating the lead-in.'
+  - file: 'docs/architecture/error-handling-strategy.md'
+    change: 'DOC-009: corrected the §3 prerequisite and recorded the probe.'
+
+carry_forward_register:
+  open:
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Unchanged from gate 5.1. Advisory, low.' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Unchanged; this story does not touch healthCheckLoop.' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, unchanged.' }
+  resolved:
+    - { id: 'DOC-008', originating_gate: '5.1', resolved_in: '5.1', resolved_on: '2026-09-17', note: 'Fixed by the PO at final acceptance; QA verified no NUL byte remains in docs/stories/5.1.story.md.' }
+    - { id: 'REQ-001', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15', note: 'Accepted by the PO (Story 4.3, post-publication validation).' }
+    - { id: 'DOC-009', originating_gate: '5.2', resolved_in: '5.2', resolved_on: '2026-09-17' }
+  register_status: >-
+    Most recent register; supersedes gate 5.1's open list. DOC-006 and DOC-007 stay recorded as
+    resolved in gate 5.1.
+
+history:
+  - at: '2026-09-17T00:00:00Z'
+    gate: PASS
+    note: >-
+      First review. All eight ACs met and re-verified by QA, with a differential fuzz and a PostgreSQL
+      encoding probe. One low documentation item (DOC-009) found and fixed by QA; DOC-008 and REQ-001
+      moved to resolved.
