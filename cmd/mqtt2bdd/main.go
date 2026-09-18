@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -139,6 +140,18 @@ func writeAgeSeconds(lastWrite, now time.Time) int64 {
 	return int64(now.Sub(lastWrite).Seconds())
 }
 
+// excludingFilter returns the first filter, in configured order, that topic matches, so
+// message_excluded names the entry an operator wrote first. With no filters configured the
+// loop never runs, which keeps the default path as cheap as before exclusion existed.
+func excludingFilter(filters []string, topic string) (string, bool) {
+	for _, filter := range filters {
+		if mqtt.MatchTopic(filter, topic) {
+			return filter, true
+		}
+	}
+	return "", false
+}
+
 // healthCheckLoop logs one health status entry per tick until done is closed, plus a
 // separate WARN whenever the buffer sits above its high-water mark. It only reads
 // msgChan's length and capacity: it never sends, receives or closes.
@@ -222,7 +235,7 @@ func main() {
 	l.Info("MQTT2BDD starting", "event", "starting", "version", Version)
 	// Both levels are reported: log_level is what the operator asked for, effective_log_level
 	// is what the handler actually filters on, so a typo is diagnosable from this one entry.
-	l.Info("configuration loaded", "event", "config_loaded", "log_level", cfg.LogLevel, "effective_log_level", logger.EffectiveLevel(cfg.LogLevel).String(), "buffer_size", cfg.BufferSize)
+	l.Info("configuration loaded", "event", "config_loaded", "log_level", cfg.LogLevel, "effective_log_level", logger.EffectiveLevel(cfg.LogLevel).String(), "buffer_size", cfg.BufferSize, "exclude_topics", strings.Join(cfg.ExcludeTopics, ","))
 
 	mqttClient := mqtt.NewClient(cfg, baseLogger)
 	mqttCtx, mqttCancel := context.WithTimeout(context.Background(), defaultConnectTimeout)
@@ -284,6 +297,12 @@ func main() {
 	l.Info("health monitor started", "event", "health_monitor_started", "interval_s", int(defaultHealthCheckInterval.Seconds()))
 
 	mqttMessageHandler := func(topic string, payload []byte) {
+		// The exclusion check comes first: an excluded message must never be timestamped,
+		// wait on a full buffer, or be reported as buffer_full or message_dropped.
+		if filter, excluded := excludingFilter(cfg.ExcludeTopics, topic); excluded {
+			l.Debug("message excluded", "event", "message_excluded", "topic", topic, "filter", filter)
+			return
+		}
 		msg := mqtt.Message{Topic: topic, Timestamp: time.Now(), Payload: payload}
 		select {
 		case msgChan <- msg:

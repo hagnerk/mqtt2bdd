@@ -76,3 +76,27 @@ func TestWriteAgeSeconds(t *testing.T) {
 		})
 	}
 }
+
+func TestExcludingFilter(t *testing.T) {
+	tests := []struct {
+		name       string
+		filters    []string
+		topic      string
+		wantFilter string
+		wantMatch  bool
+	}{
+		{"no filters configured", nil, "a/b", "", false},
+		{"no filter matches", []string{"x/#", "y/+"}, "a/b", "", false},
+		{"one filter matches", []string{"x/#", "a/#"}, "a/b", "a/#", true},
+		{"first matching filter wins", []string{"a/+", "a/#"}, "a/b", "a/+", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFilter, gotMatch := excludingFilter(tt.filters, tt.topic)
+			if gotFilter != tt.wantFilter || gotMatch != tt.wantMatch {
+				t.Errorf("excludingFilter(%q, %q) = (%q, %v), want (%q, %v)", tt.filters, tt.topic, gotFilter, gotMatch, tt.wantFilter, tt.wantMatch)
+			}
+		})
+	}
+}
