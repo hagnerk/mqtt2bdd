@@ -19,6 +19,7 @@ graceful shutdown — patterns worth studying whether or not you ever deploy it.
 ## Features
 
 - Wildcard MQTT subscription (`#`) — device-agnostic, no per-sensor configuration needed.
+- Optional topic exclusion — MQTT topic filters listed in `MQTT_EXCLUDE_TOPICS` (for example `zigbee2mqtt/bridge/#`) keep configuration traffic out of `sensor_metrics`. **The subscription stays `#`:** MQTT has no negative subscription, so excluded messages are still delivered by the broker and still cross the network, then discarded by the application before they reach the buffer.
 - Automatic MQTT reconnection with resubscribe retry, so a broker restart or network blip does
   not require a manual restart of the application.
 - In-memory buffered channel decoupling MQTT reception from database writes, with backpressure:
@@ -105,6 +106,7 @@ mqtt2bdd/
 │       ├── mqtt_reconnect_integration_test.go   # //go:build integration
 │       ├── payload_repair_integration_test.go   # //go:build integration
 │       ├── shutdown_integration_test.go         # //go:build integration
+│       ├── topic_exclusion_integration_test.go  # //go:build integration
 │       └── write_rejection_integration_test.go  # //go:build integration
 ├── internal/
 │   ├── config/                          # Environment variable loading (LoadConfig)
@@ -367,6 +369,7 @@ The application's own environment variables — the complete list, read by
 | `POSTGRES_PASSWORD` | Yes | — | Database password |
 | `LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `ERROR`, case-insensitive; an empty value silently defaults to INFO, a non-empty unrecognized value also defaults to INFO **and** logs a WARN (`event=unknown_log_level`) |
 | `BUFFER_SIZE` | No | `1000` | Message channel capacity (integer); the in-memory outage buffer between MQTT reception and database writes |
+| `MQTT_EXCLUDE_TOPICS` | No | `""` (empty, nothing excluded) | Comma-separated MQTT topic filters whose messages are not stored, for example `zigbee2mqtt/bridge/#`; `+` and `#` wildcards are allowed as whole levels only (`#` only as the last level), surrounding spaces are trimmed and empty entries ignored; an invalid filter aborts startup with `event=config_load_failed`; the parsed list is reported as `exclude_topics` on the `config_loaded` line |
 
 These variables are read directly by the Go application, in both the `dev` and production
 stacks. `dev/.env.example` and `.env.prod.example` each provide a ready-to-copy template with
@@ -582,7 +585,7 @@ As a learning aid:
 
 - Unit tests live alongside the code they test: `internal/config`, `internal/logger`,
   `internal/mqtt`, `internal/database`, and `cmd/mqtt2bdd` (`main_test.go`).
-- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go` and five files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`, `mqtt_reconnect_integration_test.go`, `payload_repair_integration_test.go`, `shutdown_integration_test.go`, and `write_rejection_integration_test.go`.
+- Integration tests (`//go:build integration`) live in `internal/database/integration_test.go` and six files under `cmd/mqtt2bdd/`: `integration_helpers_test.go`, `mqtt_reconnect_integration_test.go`, `payload_repair_integration_test.go`, `shutdown_integration_test.go`, `topic_exclusion_integration_test.go`, and `write_rejection_integration_test.go`.
 
 ## Troubleshooting
 
@@ -604,6 +607,7 @@ As a learning aid:
   minutes of downtime at 100 messages/minute).
 - **`write_rejected` ERROR log line.** The database can never store that message, so it was discarded; the other messages keep flowing. `topic`, `payload_size`, `reason` (`invalid_json` or `sqlstate`) and `sqlstate` identify it; its body is on the DEBUG `message_received` line. By contrast, a `write_failure` repeating every 10 seconds points at the environment (connection, privilege, missing table) and is retried on purpose until it is fixed.
 - **`payload_sanitized` WARN log line.** The message was stored, but with U+FFFD (`�`) in place of each piece of content PostgreSQL would have refused. `nul_escapes`, `lone_surrogates` and `invalid_utf8_sequences` count each kind of repair; `payload_size` is the size as received. The publisher is sending malformed data: fix it at the source if that data matters.
+- **A topic is missing from `sensor_metrics`.** Check `exclude_topics` on the `config_loaded` line: the topic may match one of the `MQTT_EXCLUDE_TOPICS` filters. At `LOG_LEVEL=DEBUG`, each excluded message is logged as `message_excluded` with the `filter` that matched (after its `message_received` line, which still carries the body).
 - **Health check reports `unhealthy` but the container is not restarted.** This is by design,
   stated in `docker-compose.prod.yml`'s own comment: `restart:` reacts to container *exit*, not
   to `unhealthy` status; watch `docker compose ps` or point an external watchdog at it.

@@ -1,0 +1,168 @@
+schema: 1
+story: '5.3'
+story_title: 'Exclude Topics from Persistence'
+gate: PASS
+status_reason: >-
+  All ten ACs are met and independently re-verified: gofmt, vet and staticcheck are clean with and
+  without -tags=integration, the unit and integration suites pass through the containers (rc=0),
+  parseTopicFilters, validateTopicFilter and MatchTopic each have 100 % statement coverage, and a
+  throwaway probe confirms MatchTopic allocates nothing and never panics on an invalid filter. The
+  one finding (DOC-010, a grammatical slip in the new README bullet) was corrected by QA.
+reviewer: 'Quinn (Test Architect)'
+updated: '2026-09-18T00:00:00Z'
+
+waiver: { active: false }
+
+top_issues: []
+
+resolved_issues:
+  - id: 'DOC-010'
+    severity: low
+    finding: >-
+      The new README "Features" bullet read "excluded messages are still delivered by the broker and
+      crossing the network", mixing a passive and a participle so the sentence does not parse. The
+      README is the portfolio-facing entry point of a public repository.
+    resolution: >-
+      Rewritten as "are still delivered by the broker and still cross the network". No other change
+      to the bullet, and no reflow of the surrounding paragraph.
+    verified_by: 'Quinn (Test Architect), 2026-09-18'
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - >-
+        The comma is the configuration separator, so a topic filter containing a comma cannot be
+        expressed through MQTT_EXCLUDE_TOPICS. MQTT 3.1.1 §4.7.3 allows one; no broker in this
+        project's scope publishes such a topic. Revisit only if an operator reports it.
+      - >-
+        C5: at LOG_LEVEL=DEBUG an excluded message still produces a message_received line carrying
+        the full payload body, from internal/mqtt, before message_excluded. Excluding a large,
+        chatty topic therefore does not make DEBUG quieter. Documented in the README Troubleshooting
+        entry; expect the question from operators who exclude zigbee2mqtt/bridge/# for that reason.
+      - >-
+        internal/config/topics.go and internal/mqtt/topic.go each declare their own "/", "#" and "+"
+        constants. Deliberate (config cannot import mqtt without a cycle, C1) and documented, but the
+        §4.7 grammar now lives in two files: change one, check the other.
+
+quality_score: 100
+expires: '2026-10-02T00:00:00Z'
+
+evidence:
+  tests_reviewed: 7
+  risks_identified: 4
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ac_partial: []
+    ac_gaps: []
+    notes: >-
+      AC1/AC2 — TestLoadConfig_ExcludeTopics (10 rows: unset, "", blanks, separators only, one
+      filter, trimming with empty entries, duplicates, inner spaces, invalid only, valid then
+      invalid) and TestValidateTopicFilter (28 rows, every row of the story's Validation matrix
+      including the three NUL rows, which only a white-box test can reach). AC3 — TestMatchTopic
+      (35 rows, every row of the Matching matrix, including the MQTT 3.1.1 §4.7 examples, the $
+      rule and case sensitivity). AC4/AC5/AC6 — TestExcludingFilter (first-match-wins, nil-safe)
+      plus TestTopicExclusion end-to-end. AC2 end-to-end — TestTopicExclusion_InvalidFilter.
+      AC7 — internal/mqtt/client.go untouched (git diff empty), Subscribe("#", …) unchanged;
+      README states it. AC8 — read in the five files. AC9/AC10 — the reruns below.
+  qa_rerun_2026_09_18: >-
+    From dev/, through docker compose exec go-dev: gofmt -l . empty; go vet ./... and
+    go vet -tags=integration ./... rc=0; staticcheck ./... and staticcheck -tags=integration ./...
+    rc=0; go test -count=1 ./... ok for all five packages. Coverage (go test -coverprofile +
+    go tool cover -func): parseTopicFilters 100.0 %, validateTopicFilter 100.0 %, MatchTopic 100.0 %.
+    From the repository root: ./test/run-integration-tests.sh rc=0, with TestTopicExclusion 0.07s,
+    TestTopicExclusion_InvalidFilter 0.00s, TestPayloadRepair 0.08s and TestWriteRejection 0.07s
+    all PASS, cmd/mqtt2bdd 83.696s. git diff --stat -- go.mod go.sum empty.
+  qa_probe_2026_09_18: >-
+    Throwaway test inside go-dev, deleted after the run, not committed. AllocsPerRun(1000) over
+    MatchTopic for three filter/topic shapes ("zigbee2mqtt/+/#", "a/b/c/d/e/#", "#") → 0 allocations,
+    confirming the story's NFR7 claim independently of the Dev's own measurement. Eleven invalid
+    filters ("#/", "##", "a/b#", "sport+", "+a/b", "a/+b", "++", "a\x00b", "", "#/x/#", "///#//")
+    crossed with eight topics including "", "/", "$SYS/x" and one holding a NUL → no panic, matching
+    the godoc's stated precondition relaxation.
+  qa_log_capture_2026_09_18: >-
+    Read from the QA integration run (suffix 1789722000293138494), matching the story's Log
+    Contract exactly: config_loaded … buffer_size=1000
+    exclude_topics=integration/exclusion/excluded-…/#,integration/exclusion/unused-…/+ ; the same
+    event rendering exclude_topics="" in the five runs that leave the variable unset;
+    two DEBUG message_excluded lines carrying topic and filter and neither operation nor payload;
+    one ERROR config_load_failed operation=load_config
+    error="MQTT_EXCLUDE_TOPICS: invalid topic filter \"sport/tennis/#/ranking\": '#' must be the
+    whole last level".
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      The payload body is never logged on message_excluded (asserted line by line by the integration
+      test, and structurally true since the handler returns before the Message is built). The
+      config_load_failed error names only the filter, which is operator-supplied configuration, not
+      a secret. No new dependency, no new network or filesystem surface.
+  performance:
+    status: PASS
+    notes: >-
+      MatchTopic walks both strings with strings.Cut and allocates nothing (QA-verified, 0 allocs).
+      With ExcludeTopics nil — the v1.0.0 path — excludingFilter's loop body never runs, so the
+      default costs one nil slice range per message. Validation runs once at startup and may split.
+  reliability:
+    status: PASS
+    notes: >-
+      An invalid filter aborts startup with a named cause rather than silently excluding nothing.
+      The check is the handler's first statement, so an excluded message can never be timestamped,
+      wait on a full buffer, or be reported as buffer_full or message_dropped. processed_last_interval
+      stays the WriteCount delta and is untouched by construction. No schema change; git revert of
+      this story alone restores v1.0.0 behaviour.
+  maintainability:
+    status: PASS
+    notes: >-
+      Two small pure functions, named constants, why-comments citing §4.7, godoc on the one exported
+      function stating its precondition and its allocation contract. Tests are table-driven with row
+      names that say what each row proves. components.md, logging-standards.md and core-workflows.md
+      are reconciled with the code, and the three configuration templates agree with the README table.
+
+recommendations:
+  immediate: []
+  future:
+    - action: >-
+        Optional: validateTopicFilter's two constant-string errors could be errors.New rather than
+        fmt.Errorf (no formatting verb is used). Cosmetic; staticcheck is clean either way.
+      refs: ['internal/config/topics.go']
+    - action: >-
+        Still open from gate 5.2, unrelated to this story: return the decoded size from a single
+        utf8.DecodeRune call in nextNonASCII, and commit a FuzzSanitizePayload target seeded from
+        5.2's Test Matrix.
+      refs: ['internal/database/sanitize.go', 'internal/database/sanitize_test.go']
+    - action: >-
+        dev/.env.example still does not list BUFFER_SIZE, which the story explicitly left out of
+        scope. A one-line addition would make the dev template match the README's "complete list".
+      refs: ['dev/.env.example']
+
+refactoring_by_qa:
+  - file: 'README.md'
+    change: 'DOC-010: corrected the new Features bullet ("and crossing the network" → "and still cross the network").'
+
+carry_forward_register:
+  open:
+    - { id: 'TEST-002', originating_gate: '4.2', owner: 'dev', reason: 'Unchanged from gates 5.1 and 5.2. Advisory, low.' }
+  tracked_non_blocking_no_home:
+    - { id: 'REL-001', originating_gate: '3.3', reason: 'Unchanged; this story does not touch healthCheckLoop.' }
+    - { id: 'broker-authentication', originating_gate: '3.2', reason: 'Accepted risk, unchanged.' }
+    - { id: 'sanitize-optionals', originating_gate: '5.2', reason: 'Two optional items on internal/database/sanitize.go; out of this story''s scope, restated under recommendations.future.' }
+  resolved:
+    - { id: 'DOC-010', originating_gate: '5.3', resolved_in: '5.3', resolved_on: '2026-09-18' }
+    - { id: 'logging-standards-epic5-status', originating_gate: '5.2', resolved_in: '5.3', resolved_on: '2026-09-18', note: 'Gate 5.2 recommendations.future item 3: the status sentence now records all Epic 5 events as implemented.' }
+    - { id: 'DOC-009', originating_gate: '5.2', resolved_in: '5.2', resolved_on: '2026-09-17' }
+    - { id: 'DOC-008', originating_gate: '5.1', resolved_in: '5.1', resolved_on: '2026-09-17' }
+    - { id: 'REQ-001', originating_gate: '4.3', resolved_in: '4.3', resolved_on: '2026-09-15' }
+  register_status: >-
+    Most recent register; supersedes gate 5.2's. DOC-006 and DOC-007 stay recorded as resolved in
+    gate 5.1.
+
+history:
+  - at: '2026-09-18T00:00:00Z'
+    gate: PASS
+    note: >-
+      First review. All ten ACs met and re-verified by QA, including an independent allocation and
+      no-panic probe on MatchTopic. One low documentation item (DOC-010) found and fixed by QA. Gate
+      5.2's logging-standards carry-forward is closed by this story.

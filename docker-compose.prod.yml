@@ -98,6 +98,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.prod}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       BUFFER_SIZE: ${BUFFER_SIZE:-1000}
+      MQTT_EXCLUDE_TOPICS: ${MQTT_EXCLUDE_TOPICS:-}
     # The image already sets USER nobody; restating the numeric identity keeps it
     # visible to the operator and is what security.md#container-security prescribes.
     user: "65534:65534"

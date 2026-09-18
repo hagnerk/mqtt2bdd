@@ -47,7 +47,7 @@ Exactly one `event` per log call.
 | `mqtt` | `connecting`, `connected`, `connect_timeout`, `connect_failed`, `connection_lost`, `reconnecting`, `reconnect_failed`, `reconnected`, `reconnect_cancelled`, `disconnected`, `subscribing`, `subscribed`, `subscribe_failed`, `resubscribe_failed`, `message_received` |
 | `database` | `connecting`, `connected`, `connect_failed`, `disconnected`, `write_success`, `write_failure`, `write_duplicate`, `write_rejected`, `write_skipped`, `payload_sanitized`, `topic_truncated`, `pool_stats` |
 
-`write_rejected` and `write_skipped` are implemented (Story 5.1), and `payload_sanitized` too (Story 5.2). Only `message_excluded` (Story 5.3) is specified by Epic 5 ahead of its implementation.
+All Epic 5 events are implemented: `write_rejected` and `write_skipped` (Story 5.1), `payload_sanitized` (Story 5.2), and `message_excluded` (Story 5.3).
 
 `unknown_log_level` is emitted from the `logger` package itself but tagged `component=main`, because
 it reports on the application's own configuration rather than on the logger as a subsystem.
@@ -77,7 +77,7 @@ any `operation` value would be fabricated.
 | Write rejection (`write_rejected`) | `topic`, `payload_size` (bytes, as received, before any repair), `duration_us` (`0` for a local rejection), `reason` (`invalid_json` for a local rejection, `sqlstate` for a server one), `sqlstate` (the five-character code; `reason=sqlstate` only). The payload body is never included |
 | Write skip (`write_skipped`, DEBUG only) | `topic`, `reason` (`empty_payload`) |
 | Payload repair (`payload_sanitized`) | `topic`, `payload_size` (bytes, before repair), `nul_escapes`, `lone_surrogates`, `invalid_utf8_sequences` (one count per repair kind) |
-| Topic exclusion (`message_excluded`, DEBUG only) | `topic`, `filter` (the `MQTT_EXCLUDE_TOPICS` entry that matched) |
+| Topic exclusion (`message_excluded`, DEBUG only) | `topic`, `filter` (the `MQTT_EXCLUDE_TOPICS` entry that matched, the first one in configured order); never the payload body |
 | Message reception (`message_received`, DEBUG only) | `topic`, `payload_size` (bytes), `payload` (the raw message payload as a string; DEBUG-only and level-guarded so the conversion cost is not paid at INFO) |
 | Sensor name truncation (`topic_truncated`) | `original_length` (rune-count of the sensor name before truncation), `truncated_topic` (the truncated, last-255-rune sensor name actually used for the insert) |
 | Reconnection (`reconnecting` / `reconnect_failed`) | `attempt` (1-based reconnect attempt counter) |
@@ -85,7 +85,7 @@ any `operation` value would be fabricated.
 | Log level validation (`unknown_log_level`) | `level` (the raw, unrecognized `LOG_LEVEL` value the operator supplied — distinct from `log_level`/`effective_log_level` below, which are always valid) |
 | Health check (`health_check`) | `mqtt_status`, `db_status`, `db_last_write_age_s` (`-1` ⇒ no successful write since startup), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent`, `processed_last_interval`, `rejected_last_interval` (messages discarded by `write_rejected` since the previous entry) |
 | Buffer pressure (`buffer_full` / `buffer_high`) | `buffer_size` (`buffer_full` only — the configured channel capacity, `cfg.BufferSize`; also emitted at startup on `config_loaded`, see below — the field is genuinely shared across both areas, not mis-filed in one), `buffer_used`, `buffer_capacity`, `buffer_utilization_percent` (`buffer_high` only) |
-| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size` (`config_loaded` — same field as the `buffer_full` row above), `exclude_topics` (`config_loaded` — the parsed `MQTT_EXCLUDE_TOPICS` list), `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
+| Startup / shutdown | `version`, `log_level`, `effective_log_level`, `buffer_size` (`config_loaded` — same field as the `buffer_full` row above), `exclude_topics` (`config_loaded` — the parsed `MQTT_EXCLUDE_TOPICS` list, comma-joined after trimming; `""` when nothing is excluded), `buffer_capacity`, `interval_s`, `signal`, `count`, `buffered`, `failed_component` |
 
 `failed_component` is deliberately not `component`: an entry naming a culprit is still emitted by
 `main`, and `component` must keep identifying the emitter.

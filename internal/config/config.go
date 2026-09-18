@@ -29,8 +29,9 @@ type Config struct {
 	PostgresPassword string
 
 	// Application Configuration
-	LogLevel   string // Default "INFO"
-	BufferSize int    // Default 1000 — message channel capacity
+	LogLevel      string   // Default "INFO"
+	BufferSize    int      // Default 1000 — message channel capacity
+	ExcludeTopics []string // Optional — default none; MQTT topic filters whose messages are never persisted
 }
 
 // LoadConfig reads application configuration from environment variables.
@@ -102,6 +103,12 @@ func LoadConfig() (*Config, error) {
 	} else {
 		cfg.BufferSize = defaultBufferSize
 	}
+
+	excludeTopics, err := parseTopicFilters(os.Getenv("MQTT_EXCLUDE_TOPICS"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.ExcludeTopics = excludeTopics
 
 	return cfg, nil
 }

@@ -67,7 +67,7 @@ type Config struct {
 **Validation Rules:**
 - Required fields: MQTT broker/port, PostgreSQL connection details
 - Optional fields: MQTT auth (for anonymous brokers), BufferSize (default 1000), ExcludeTopics (default none)
-- `MQTT_EXCLUDE_TOPICS` is a comma-separated list of MQTT 3.1.1 topic filters; each is validated at startup (`#` only as a whole final level, `+` only as a whole level), and an invalid filter aborts startup
+- `MQTT_EXCLUDE_TOPICS` is a comma-separated list of MQTT 3.1.1 topic filters; surrounding whitespace is trimmed, empty entries are ignored, and an unset or empty value excludes nothing (`ExcludeTopics` is `nil`); each filter is validated at startup in `internal/config` (`#` only as a whole final level, `+` only as a whole level, no NUL character), and an invalid filter aborts startup with `config_load_failed` naming the filter
 - Log level defaults to INFO if invalid/missing
 
 ## Component: Structured Logger
@@ -137,6 +137,7 @@ func InitLogger(level string) *slog.Logger {
 - `Subscribe(topic string, handler MessageHandler) error` - Subscribe to topics with callback
 - `Disconnect()` - Clean disconnect from broker
 - `IsConnected() bool` - Connection health check
+- `MatchTopic(filter, topic string) bool` - MQTT 3.1.1 §4.7 topic-filter matching (allocation-free), used by `main` to drop messages on `MQTT_EXCLUDE_TOPICS` topics
 
 **Dependencies:**
 - `github.com/eclipse/paho.mqtt.golang` ~1.5.0
@@ -160,7 +161,7 @@ type MessageHandler func(topic string, payload []byte)
 - Runs in background goroutine (non-blocking)
 
 **Architecture Notes:**
-- Wildcard subscription (`#`) captures all topics without configuration
+- Wildcard subscription (`#`) captures all topics without configuration; topics matching `MQTT_EXCLUDE_TOPICS` are still received and are dropped by `main`'s message handler before the buffer
 - Message handler runs in separate goroutine per message (Paho behavior)
 - No message acknowledgment (QoS 0) - optimized for throughput over guaranteed delivery
 
